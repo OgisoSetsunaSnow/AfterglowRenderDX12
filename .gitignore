@@ -1,0 +1,40 @@
+# ===== Visual Studio / MSBuild 构建产物 =====
+# VS 中间目录与输出目录（仓库根就是工程根）
+Afterglo.*/
+x64/
+
+# ===== 编译器/链接器产物 =====
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.iobj
+*.ipdb
+*.tlog
+*.recipe
+*.log
+
+# ===== VS 用户本地配置 =====
+.vs/
+*.vcxproj.user
+*.suo
+*.user
+
+# ===== CodeBuddy 工作笔记（私人会话记忆，不属于项目代码） =====
+.codebuddy/
+
+# ===== 运行/临时文件 =====
+*.cache
+*.png.tmp
+Thumbs.db
+Desktop.ini
+run_out*.txt
+run_err*.txt
+
+# ===== assimp 静态库（约 540MB，过大不入库，见 README"第三方依赖库"节自行下载） =====
+vsbuild/Libraries/assimp-5.4.3/lib/*.lib
+
+# ===== 备份与系统文件 =====
+*.bak
+*.orig
