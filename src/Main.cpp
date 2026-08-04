@@ -1,9 +1,12 @@
 #include "Camera.h"
 #include "D3D12Core.h"
 #include "FreeCamera.h"
+#include "FullScreenPass.h"
 #include "Mesh.h"
 #include "MeshRenderer.h"
 #include "Model.h"
+#include "OffscreenRT.h"
+#include "PostProcess.h"
 #include "ShaderCompiler.h"
 #include "Texture.h"
 #include "Window.h"
@@ -37,6 +40,39 @@ int main() {
 		std::cout << "[AfterglowRender DX12] compiled " << shaderFile
 			<< " (vs " << vs.size() << "B, ps " << ps.size() << "B)" << std::endl;
 
+		// 阶段 9：描边 shader。
+		const std::string outlineFile = "Shaders/Outline.hlsl";
+		const auto outlineVs = shader::compileFromFile(outlineFile, vsOptions);
+		const auto outlinePs = shader::compileFromFile(outlineFile, psOptions);
+		std::cout << "[AfterglowRender DX12] compiled " << outlineFile
+			<< " (vs " << outlineVs.size() << "B, ps " << outlinePs.size() << "B)" << std::endl;
+
+		// 阶段 10：后处理 shader（全屏 pass）。
+		const std::string postFile = "Shaders/PostProcess.hlsl";
+		const auto postVs = shader::compileFromFile(postFile, vsOptions);
+		const auto postPs = shader::compileFromFile(postFile, psOptions);
+		std::cout << "[AfterglowRender DX12] compiled " << postFile
+			<< " (vs " << postVs.size() << "B, ps " << postPs.size() << "B)" << std::endl;
+
+		// 阶段 10b：Bloom 三 pass（DownSampling + HorizontalBlur + VerticalBlur）。
+		struct BloomShaders {
+			std::vector<std::uint8_t> vs;
+			std::vector<std::uint8_t> ps;
+		};
+		auto compileFS = [&](const char* file) {
+			shader::CompileOptions localVs = vsOptions;
+			shader::CompileOptions localPs = psOptions;
+			BloomShaders s;
+			s.vs = shader::compileFromFile(file, localVs);
+			s.ps = shader::compileFromFile(file, localPs);
+			std::cout << "[AfterglowRender DX12] compiled " << file
+				<< " (vs " << s.vs.size() << "B, ps " << s.ps.size() << "B)" << std::endl;
+			return s;
+		};
+		BloomShaders downSh = compileFS("Shaders/DownSampling.hlsl");
+		BloomShaders horzSh = compileFS("Shaders/HorizontalBlur.hlsl");
+		BloomShaders vertSh = compileFS("Shaders/VerticalBlur.hlsl");
+
 		Texture texture;
 		texture.load(context, "Textures/checker.png");
 		std::cout << "[AfterglowRender DX12] loaded texture "
@@ -60,7 +96,43 @@ int main() {
 		meshes[3].create(context, Mesh::makePrismVertices(), Mesh::makePrismIndices());
 
 		MeshRenderer meshRenderer(context, vs, ps,
-			{ &texture, &battleMageBody, &battleMageDecal }, 256);
+			{ &texture, &battleMageBody, &battleMageDecal }, 256, outlineVs, outlinePs,
+			DXGI_FORMAT_R16G16B16A16_FLOAT); // 渲染到 HDR 离屏 sceneColor
+
+		// 阶段 8：方向光（左上角照向场景）。
+		meshRenderer.setLight(glm::normalize(glm::vec3(0.4f, 1.0f, 0.3f)),
+			glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(0.12f, 0.12f, 0.15f));
+
+		// 阶段 10：离屏 sceneColor + 后处理。
+		// 共享 SRV 堆：D3D12 同一时刻只能设置一个 CBV_SRV_UAV 堆，所有 RT 的 SRV 放一起。
+		// index 0=offscreen, 1=downSampled, 2=horizontalBlur, 3=combined。
+		Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> sharedSrvHeap;
+		D3D12_DESCRIPTOR_HEAP_DESC sharedDesc{};
+		sharedDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		sharedDesc.NumDescriptors = 4;
+		sharedDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+		if (FAILED(context.device()->CreateDescriptorHeap(&sharedDesc, IID_PPV_ARGS(&sharedSrvHeap)))) {
+			throw std::runtime_error("Failed to create shared SRV heap");
+		}
+
+		OffscreenRT offscreen;
+		offscreen.create(context, 0, 0, sharedSrvHeap.Get(), 0, nullptr);
+		PostProcess postProcess(context, postVs, postPs);
+
+		// 阶段 10b：Bloom（1/2 分辨率降采样 RT + 三个 fullscreen passes）。
+		const UINT halfW = context.width() / 2;
+		const UINT halfH = context.height() / 2;
+		const float bloomClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		OffscreenRT downSampled;
+		downSampled.create(context, halfW, halfH, sharedSrvHeap.Get(), 1, bloomClear);
+		OffscreenRT horizontalBlur;
+		horizontalBlur.create(context, halfW, halfH, sharedSrvHeap.Get(), 2, bloomClear);
+		OffscreenRT combined;
+		combined.create(context, halfW, halfH, sharedSrvHeap.Get(), 3, bloomClear);
+
+		FullScreenPass downSamplingPass(context, downSh.vs, downSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
+		FullScreenPass horizontalBlurPass(context, horzSh.vs, horzSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
+		FullScreenPass verticalBlurPass(context, vertSh.vs, vertSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
 
 		// ---- 加载参考项目模型 ----
 		Model boxModel;
@@ -97,6 +169,7 @@ int main() {
 				glm::vec3(0.01f)),
 			glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 		// 按材质名绑定纹理：base→body、decal→decal、其余回退 body。
+		// 对齐参考项目：outline 是材质级（BattleMage 有 BattleMageOutline 材质），仅角色模型开启描边。
 		for (std::size_t i = 0; i < battleMageModel.meshes().size(); ++i) {
 			UINT srvIndex = 1; // 默认身体
 			const std::string& matName = battleMageModel.materialNames()[i];
@@ -104,7 +177,7 @@ int main() {
 				srvIndex = 2;
 			}
 			items.push_back({ &battleMageModel.meshes()[i], battleMageBase,
-				glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), srvIndex });
+				glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), srvIndex, true, 10.0f });
 		}
 
 		// 相机：F 键在轨道/自由之间切换。
@@ -195,11 +268,38 @@ int main() {
 					static_cast<float>(context.width()) / static_cast<float>(context.height()),
 					0.01f, 1000.0f);
 
+			// 阶段 10：场景渲染到离屏 sceneColor（HDR）。
+			offscreen.transitionColor(D3D12_RESOURCE_STATE_RENDER_TARGET);
+			const float clearColor[4] = { 0.10f, 0.11f, 0.13f, 1.0f };
+			context.commandList()->ClearRenderTargetView(offscreen.rtvHandle(), clearColor, 0, nullptr);
+			meshRenderer.render(view, proj, items, offscreen.rtvHandle());
+
+			// 后处理：采样 sceneColor → 输出到交换链后台缓冲。
+			offscreen.transitionColor(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+			// 阶段 10b：Bloom（DownSampling → HorizontalBlur → VerticalBlur/Combined）。
+			downSampled.transitionColor(D3D12_RESOURCE_STATE_RENDER_TARGET);
+			context.commandList()->ClearRenderTargetView(downSampled.rtvHandle(), bloomClear, 0, nullptr);
+			downSamplingPass.render(sharedSrvHeap.Get(), offscreen.srvHandle(),
+				downSampled.rtvHandle(), halfW, halfH);
+			downSampled.transitionColor(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+			horizontalBlur.transitionColor(D3D12_RESOURCE_STATE_RENDER_TARGET);
+			context.commandList()->ClearRenderTargetView(horizontalBlur.rtvHandle(), bloomClear, 0, nullptr);
+			horizontalBlurPass.render(sharedSrvHeap.Get(), downSampled.srvHandle(),
+				horizontalBlur.rtvHandle(), halfW, halfH);
+			horizontalBlur.transitionColor(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+			combined.transitionColor(D3D12_RESOURCE_STATE_RENDER_TARGET);
+			context.commandList()->ClearRenderTargetView(combined.rtvHandle(), bloomClear, 0, nullptr);
+			verticalBlurPass.render(sharedSrvHeap.Get(), horizontalBlur.srvHandle(),
+				combined.rtvHandle(), halfW, halfH);
+			combined.transitionColor(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
 			context.transitionCurrentBackBuffer(D3D12_RESOURCE_STATE_PRESENT,
 				D3D12_RESOURCE_STATE_RENDER_TARGET);
-			const float clearColor[4] = { 0.10f, 0.11f, 0.13f, 1.0f };
-			context.commandList()->ClearRenderTargetView(context.currentRtv(), clearColor, 0, nullptr);
-			meshRenderer.render(view, proj, items);
+			postProcess.render(sharedSrvHeap.Get(), offscreen.srvHandle(),
+				combined.srvHandle(), context.currentRtv());
 			context.transitionCurrentBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET,
 				D3D12_RESOURCE_STATE_PRESENT);
 

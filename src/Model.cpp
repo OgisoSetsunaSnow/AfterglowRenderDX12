@@ -64,6 +64,11 @@ bool Model::load(D3D12Context& context, const std::string& filePath) {
 			} else {
 				v.uv = glm::vec2(0.0f, 0.0f);
 			}
+			if (am->HasNormals()) { // aiProcess_GenNormals 已保证存在
+				v.normal = glm::vec3(am->mNormals[i].x, am->mNormals[i].y, am->mNormals[i].z);
+			} else {
+				v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+			}
 			v.color = glm::vec4(1.0f);
 			vertices.push_back(v);
 		}

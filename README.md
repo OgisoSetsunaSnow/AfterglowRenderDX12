@@ -24,7 +24,7 @@ DX12/                            # 仓库根 = 工程根
     │   ├── glm-1.0.1/           # 数学（header-only）
     │   ├── VulkanSDK-1.3.290.0/ # 仅 DXC：dxcapi.h / dxcompiler.lib / dxcompiler.dll
     │   ├── assimp-5.4.3/        # 模型加载（头文件随仓库；静态库见"第三方依赖库"）
-    │   └── openimageio-3.0.9.1/ # 仅 assimp 静态依赖链接库 + zlibd1.dll
+    │   └── openimageio-3.0.9.1/ # 仅 assimp 静态依赖链接库 + 运行时 DLL（Debug zlibd1 / Release zlib1+bz2+liblzma）
     └── Assets/                  # 运行资源（仅程序引用部分）
         ├── Characters/BattleMage/  # BattleMage.fbx + 贴图
         └── Shared/Models/Box.fbx
@@ -41,7 +41,12 @@ DX12/                            # 仓库根 = 工程根
 ## 第三方依赖库
 
 仓库已包含：GLFW（静态库）、GLM（头文件）、DXC 1.9.x（HLSL 编译器）、assimp 头文件、
-zlib/minizip-ng/lzma/bz2（assimp 链接依赖）及运行时 `zlibd1.dll` / `dxcompiler.dll`。
+zlib/minizip-ng/lzma/bz2（assimp 链接依赖）及全部运行时 DLL：
+
+| 配置 | 运行时 DLL（构建时自动复制到输出目录） | 位置 |
+|---|---|---|
+| Debug | `dxcompiler.dll`、`zlibd1.dll` | `vsbuild/Libraries/openimageio-3.0.9.1/debug/bin/` |
+| Release | `dxcompiler.dll`、`zlib1.dll`、`bz2.dll`、`liblzma.dll` | `vsbuild/Libraries/openimageio-3.0.9.1/bin/` |
 
 **唯一需要自行下载的：assimp 静态库（约 540MB，不便随仓库分发）**
 
@@ -55,7 +60,7 @@ zlib/minizip-ng/lzma/bz2（assimp 链接依赖）及运行时 `zlibd1.dll` / `dx
 2. 或用 CMake 自行编译 assimp 5.4.3（MSVC，静态库 `/MTd` 与 `/MT` 各一份），放入上表路径。
 
 > 如果缺这两个 `.lib`，编译会报 `LNK1104: cannot open file 'assimp-vc143-mtd.lib'`。
-> assimp 链接时还需要的 zlib/minizip-ng/lzma/bz2 与运行时 `zlibd1.dll` 已随仓库提供，无需另装。
+> assimp 链接时还需要的 zlib/minizip-ng/lzma/bz2 链接库与运行时 DLL 已随仓库提供，无需另装。
 
 ## 构建
 
@@ -70,9 +75,9 @@ MSBuild.exe AfterglowRenderDX12.sln /p:Configuration=Debug /p:Platform=x64 /m
 ## 运行
 
 1. 工作目录必须为仓库根 `DX12/`（程序以相对路径引用 `Shaders/`、`Textures/`、`vsbuild/Assets/`）。
-2. 构建后 `x64/Debug/AfterglowRenderDX12.exe` 可直接运行。
-3. 运行时 DLL（`dxcompiler.dll`、`zlibd1.dll`）已由 vcxproj 中的 **`CopyRuntimeDLLs` target**
-   （`AfterTargets="Build"`）每次构建自动复制到输出目录，无需手动处理。
+2. 构建后 `x64/<Debug|Release>/AfterglowRenderDX12.exe` 可直接运行。
+3. 运行时 DLL 已由 vcxproj 中的 **`CopyRuntimeDLLs` target**（`AfterTargets="Build"`）按配置
+   自动复制到输出目录（Debug：dxcompiler+zlibd1；Release：dxcompiler+zlib1+bz2+liblzma），无需手动处理。
 
 启动后窗口显示 6 个物体（立方体/球/三棱柱/Box.fbx/地面 + BattleMage 角色）：
 
@@ -87,5 +92,6 @@ MSBuild.exe AfterglowRenderDX12.sln /p:Configuration=Debug /p:Platform=x64 /m
 | 编译报 LNK2038 | glfw 静态库为 /MT 编译，项目 Debug 用 `/MTd`、Release 用 `/MT`，不要改动运行时库设置 |
 | 启动报 "dxcompiler.dll missing" | 确认输出目录存在 `dxcompiler.dll`（构建后事件已自动复制；也可手动从 `vsbuild/Libraries/VulkanSDK-1.3.290.0/Bin/` 复制） |
 | 启动报 "Failed to create graphics pipeline state" | 本仓库内的 DXC 为 1.9.x；若自行替换为旧版（如 1.3.290.0 附带的 1.8.x），其生成的 DXIL 在部分驱动上会 PSO 失败，请保持仓库内版本 |
-| 启动报缺 `zlibd1.dll` | Debug 版 assimp 静态依赖，同上自动复制；Release 版需要 release 的 zlib.dll（当前未提供） |
+| 启动报缺 `zlibd1.dll` | Debug 版 assimp 静态依赖，构建时自动复制；请确认用的是 Debug 配置 |
+| 启动报缺 `zlib1.dll` / `bz2.dll` / `liblzma.dll` | Release 版 assimp 静态依赖，构建时自动复制；请确认用的是 Release 配置 |
 | 找不到模型/贴图 | 运行工作目录必须是仓库根 `DX12/`（资源用相对路径） |

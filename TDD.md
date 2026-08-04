@@ -26,6 +26,8 @@ AfterglowRender 是一个基于 **Vulkan** 的实时渲染器，聚焦渲染算�
 | 相机 | 轨道相机（Orbit）+ 自由相机（Free/FPS），F 键切换 |
 | 模型加载 | assimp 加载 fbx/obj，多 mesh 拆分，记录材质名 |
 | 多材质纹理 | 每个 mesh 按材质名绑定不同贴图（BattleMage base/decal） |
+| 方向光 + Toon | 法线数据（程序化几何 + assimp）+ 方向光（b1 FrameCB）+ 三档 Toon 分段着色 |
+| 描边（材质级） | 单 pass CullMode FRONT 背面外扩，对齐参考项目 `ArcOutline.mat`；仅 `DrawItem.outline=true` 的物体启用 |
 
 ### 1.3 技术栈
 
@@ -230,7 +232,8 @@ namespace shader {
 struct MeshVertex {
   glm::vec3 pos;    // offset 0
   glm::vec2 uv;     // offset 12
-  glm::vec4 color;  // offset 20
+  glm::vec3 normal; // offset 20
+  glm::vec4 color;  // offset 32
 };
 ```
 
@@ -249,36 +252,69 @@ struct MeshVertex {
 
 **职责**：图形管线（根签名 + PSO）+ 多物体/多纹理绘制。
 
-**根签名（3 参数）**：
+**根签名（4 参数）**：
 | 参数 | 类型 | 绑定 | 阶段 |
 |---|---|---|---|
 | 0 | CBV root descriptor | `b0`（PerObjectCB） | ALL |
-| 1 | Descriptor table (SRV) | `t0`（纹理） | PIXEL |
-| 2 | Descriptor table (Sampler) | `s0` | PIXEL |
+| 1 | CBV root descriptor | `b1`（FrameCB） | ALL（光照 PS 用；描边 VS 用相机/投影参数） |
+| 2 | Descriptor table (SRV) | `t0`（纹理） | PIXEL |
+| 3 | Descriptor table (Sampler) | `s0` | PIXEL |
 
 **每物体常量缓冲**：
 ```cpp
-struct PerObjectCB { glm::mat4 mvp; glm::vec4 baseColor; };  // 256B 对齐
+struct PerObjectCB {         // 256B 对齐
+  glm::mat4 viewProj;        // proj * view
+  glm::mat4 world;
+  glm::mat4 invTransModel;   // world 的逆转置（法线/描边外扩用，对齐参考项目）
+  glm::vec4 baseColor;
+  float outlineWidth;        // 描边外扩宽度（参考项目 outlineWidth=10）
+  glm::vec3 _pad;
+};
 ```
+
+**每帧常量缓冲（阶段 8 新增）**：
+```cpp
+struct FrameCB {
+  glm::vec4 lightDir;              // 指向光源的单位方向
+  glm::vec4 lightColor;            // w = 强度（同参考项目 dirLightColor.a）
+  glm::vec4 ambientColor;
+  glm::vec4 cameraPosition;
+  float invProjection00;           // 1/proj[0][0]，描边 FOV 补偿
+  float invScreenAspectRatio;
+  float outlineDistanceFadeFactor; // 参考项目 ArcOutline=0.001
+  float _pad;
+};
+```
+- `MeshRenderer::setLight(dir, color, ambient)` 设置场景方向光。
 
 **DrawItem**：
 ```cpp
 struct DrawItem {
   const Mesh* mesh;
-  glm::mat4 model;      // 世界变换
-  glm::vec4 color;      // 材质基础色
-  UINT srvIndex;        // 纹理在 SRV heap 中的索引
+  glm::mat4 model;       // 世界变换
+  glm::vec4 color;       // 材质基础色
+  UINT srvIndex;         // 纹理在 SRV heap 中的索引
+  bool outline;          // 是否描边（材质级，参考项目仅角色模型启用）
+  float outlineWidth;    // 描边宽度（参考项目 10.0）
 };
 ```
 
+**描边（阶段 9，对齐参考项目 `ArcOutline.mat`）**：
+- 独立 PSO：`CullMode=FRONT` + `FrontCounterClockwise=TRUE`（= `VK_CULL_MODE_FRONT_BIT` + CCW front），输入布局仅 POSITION/NORMAL。
+- `Outline.hlsl`：世界空间沿法线外扩 `worldPos += outlineWidth * (distanceFade * fovFade) * worldNormal`，
+  距离衰减 `min(dist*factor, 0.001)`、FOV 补偿 `invProjection00 * invScreenAspectRatio`（参考项目 ArcOutline_VS）。
+- 仅 `DrawItem.outline=true` 的物体绘制描边（材质级，非全局）；主体 pass 在其后正常覆盖。
+
 **关键实现**：
-- PSO：VS/PS bytecode、输入布局（POSITION/TEXCOORD/COLOR）、`D3D12_CULL_MODE_NONE`（双面渲染）、`FrontCounterClockwise=TRUE`、D32 深度、R8G8B8A8 RTV。
+- PSO：VS/PS bytecode、输入布局（POSITION/TEXCOORD/NORMAL/COLOR）、`D3D12_CULL_MODE_NONE`（双面渲染）、`FrontCounterClockwise=TRUE`、D32 深度、R8G8B8A8 RTV。
 - 深度缓冲：默认堆 `Tex2D(D32_FLOAT)` + DSV heap，初始 `DEPTH_WRITE`。
 - 纹理管理：构造接收 `vector<Texture*>`，创建 `CBV_SRV_UAV` heap（每纹理一个 SRV），记录 `_srvDescriptorSize`。
 - `render(view, proj, items)`：
   1. 视口/裁剪 → 清深度 → 绑定 RTV+DSV。
-  2. 绑定描述符堆、根签名、PSO、采样器表。
-  3. 逐物体：写 `PerObjectCB`（`mvp = proj * view * model`）到上传堆对应 slot（256B 对齐）→ `SetGraphicsRootConstantBufferView` → 按 `srvIndex` 设 SRV 表 → `IASetVertexBuffers/IndexBuffer` → `DrawIndexedInstanced`。
+  2. 绑定描述符堆、根签名、采样器表。
+  3. 写 `FrameCB`（光照+相机+描边参数）到帧 CBV（b1）。
+  4. 描边 pass（若启用）：逐 `item.outline` 物体写 `PerObjectCB`（viewProj/world/invTransModel/outlineWidth）→ 画描边。
+  5. 主体 pass：逐物体写 `PerObjectCB` → 按 `srvIndex` 设 SRV 表 → `DrawIndexedInstanced`。
 
 **设计简化**：每帧 `Map/Unmap` 上传缓冲写所有物体 CBV；后续用 ring buffer 优化。
 
@@ -423,7 +459,7 @@ float4 PSMain(PSIn input) : SV_TARGET {
 | 4 | 坐标系统 | glm RH 混用 DX12 LH | 低 |
 | 5 | 索引精度 | uint16（<65536 顶点/ mesh） | 中（大模型） |
 | 6 | 节点变换 | Model 未应用 assimp 节点层次变换 | 中 |
-| 7 | 渲染能力 | 无光照/描边/后处理/阴影（当前为漫反射） | 高（对目标效果） |
+| 7 | 渲染能力 | 已实现方向光 + Toon + 模型描边（材质级）；后处理/阴影未做 | 高（对目标效果） |
 | 8 | 棋盘格颜色 | 测试纹理黄+深蓝（GDI+ 颜色管理） | 低 |
 | 9 | 调试日志 | cout 缓冲不实时，调试打印用 cerr | 低 |
 
@@ -436,9 +472,12 @@ float4 PSMain(PSIn input) : SV_TARGET {
 [✓] 阶段 3-4：纹理 + 相机（Orbit/Free）
 [✓] 阶段 5：多 Mesh + 材质数据系统
 [✓] 阶段 6-7：assimp 模型 + 多材质纹理（BattleMage）
-[ ] 阶段 8：法线数据（MeshVertex + normal）→ 方向光 + Toon shading
-[ ] 阶段 9：描边（Outline pass）
+[✓] 阶段 8：法线数据（MeshVertex + normal）→ 方向光 + Toon shading（2026-08-04）
+[✓] 阶段 9：描边（Outline pass，单 pass 对齐参考项目 ArcOutline，材质级）（2026-08-04）
 [ ] 阶段 10：后处理（bloom / ACES tonemap）
+  [✓] 10a：离屏 sceneColor(HDR) + 全屏 PostProcess pass（2026-08-04）
+  [✓] 10b：Bloom（DownSampling + HorizontalBlur + VerticalBlur/Combined）（2026-08-04）
+  [ ] 10c：ACES tonemap（LUT compute 烘焙 + LUTMapping）
 [ ] 阶段 11：多 pass 框架（Forward / Compute / UI）→ 向参考项目管线靠拢
 [ ] 阶段 12：OpenImageIO / EXR HDR 支持
 ```

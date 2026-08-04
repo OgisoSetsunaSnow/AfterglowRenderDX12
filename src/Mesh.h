@@ -9,9 +9,10 @@
 #include <vector>
 
 struct MeshVertex {
-	glm::vec3 pos;
-	glm::vec2 uv;
-	glm::vec4 color;
+	glm::vec3 pos;    // offset 0
+	glm::vec2 uv;     // offset 12
+	glm::vec3 normal; // offset 20
+	glm::vec4 color;  // offset 32
 };
 
 // 通用网格：顶点/索引数据 + GPU 缓冲。几何由工厂函数生成。

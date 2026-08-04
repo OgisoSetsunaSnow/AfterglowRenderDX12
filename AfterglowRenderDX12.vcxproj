@@ -94,6 +94,9 @@
     <ClCompile Include="src\FreeCamera.cpp" />
     <ClCompile Include="src\Mesh.cpp" />
     <ClCompile Include="src\Model.cpp" />
+    <ClCompile Include="src\OffscreenRT.cpp" />
+    <ClCompile Include="src\PostProcess.cpp" />
+    <ClCompile Include="src\FullScreenPass.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Window.h" />
@@ -105,6 +108,8 @@
     <ClInclude Include="src\FreeCamera.h" />
     <ClInclude Include="src\Mesh.h" />
     <ClInclude Include="src\Model.h" />
+    <ClInclude Include="src\OffscreenRT.h" />
+    <ClInclude Include="src\PostProcess.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
@@ -112,9 +117,22 @@
   <!-- 每次 Build 后把运行时 DLL 复制到输出目录，保证 exe 可直接运行。
        Debug 依赖 zlibd1.dll（assimp 静态库动态依赖）；两个配置都需要 dxcompiler.dll。 -->
   <Target Name="CopyRuntimeDLLs" AfterTargets="Build">
+    <!-- 两个配置都需要 DXC -->
     <Copy SourceFiles="$(ProjectDir)vsbuild\Libraries\VulkanSDK-1.3.290.0\Bin\dxcompiler.dll"
           DestinationFolder="$(OutDir)" />
-    <Copy SourceFiles="$(ProjectDir)vsbuild\Libraries\openimageio-3.0.9.1\debug\bin\zlibd1.dll"
+    <!-- Debug：assimp 静态依赖 zlibd1.dll -->
+    <Copy Condition="'$(Configuration)'=='Debug'"
+          SourceFiles="$(ProjectDir)vsbuild\Libraries\openimageio-3.0.9.1\debug\bin\zlibd1.dll"
+          DestinationFolder="$(OutDir)" />
+    <!-- Release：assimp 静态依赖 zlib1/bz2/liblzma -->
+    <Copy Condition="'$(Configuration)'=='Release'"
+          SourceFiles="$(ProjectDir)vsbuild\Libraries\openimageio-3.0.9.1\bin\zlib1.dll"
+          DestinationFolder="$(OutDir)" />
+    <Copy Condition="'$(Configuration)'=='Release'"
+          SourceFiles="$(ProjectDir)vsbuild\Libraries\openimageio-3.0.9.1\bin\bz2.dll"
+          DestinationFolder="$(OutDir)" />
+    <Copy Condition="'$(Configuration)'=='Release'"
+          SourceFiles="$(ProjectDir)vsbuild\Libraries\openimageio-3.0.9.1\bin\liblzma.dll"
           DestinationFolder="$(OutDir)" />
   </Target>
 </Project>

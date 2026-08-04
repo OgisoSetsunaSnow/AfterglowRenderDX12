@@ -101,6 +101,12 @@ std::vector<MeshVertex> Mesh::makeCubeVertices() {
 		{ { { -1, -1, 1 }, { 1, -1, 1 }, { 1, 1, 1 }, { -1, 1, 1 } } },
 		{ { { 1, -1, -1 }, { -1, -1, -1 }, { -1, 1, -1 }, { 1, 1, -1 } } },
 	} };
+	// 面法线：与 faces 数组一一对应（+X / -X / +Y / -Y / +Z / -Z）。
+	const std::array<glm::vec3, 6> faceNormals = {
+		glm::vec3(1, 0, 0), glm::vec3(-1, 0, 0),
+		glm::vec3(0, 1, 0), glm::vec3(0, -1, 0),
+		glm::vec3(0, 0, 1), glm::vec3(0, 0, -1),
+	};
 	const std::array<std::array<float, 2>, 4> uvs = {
 		std::array<float, 2>{ 0, 0 }, std::array<float, 2>{ 1, 0 },
 		std::array<float, 2>{ 1, 1 }, std::array<float, 2>{ 0, 1 },
@@ -115,6 +121,7 @@ std::vector<MeshVertex> Mesh::makeCubeVertices() {
 			MeshVertex vertex;
 			vertex.pos = glm::vec3(faces[f][v][0], faces[f][v][1], faces[f][v][2]);
 			vertex.uv = glm::vec2(uvs[v][0], uvs[v][1]);
+			vertex.normal = faceNormals[f];
 			vertex.color = white;
 			verts.push_back(vertex);
 		}
@@ -148,6 +155,7 @@ std::vector<MeshVertex> Mesh::makeSphereVertices(int stacks, int slices) {
 			v.pos = glm::vec3(std::sin(phi) * std::cos(theta), std::cos(phi), std::sin(phi) * std::sin(theta));
 			v.uv = glm::vec2(static_cast<float>(sl) / static_cast<float>(slices),
 				static_cast<float>(s) / static_cast<float>(stacks));
+			v.normal = v.pos; // 单位球：法线 = 顶点位置
 			v.color = glm::vec4(1.0f);
 			verts.push_back(v);
 		}
@@ -192,6 +200,7 @@ std::vector<MeshVertex> Mesh::makePlaneVertices(float size) {
 		MeshVertex v;
 		v.pos = glm::vec3(positions[i][0], positions[i][1], positions[i][2]);
 		v.uv = glm::vec2(uvs[i][0], uvs[i][1]);
+		v.normal = glm::vec3(0.0f, 1.0f, 0.0f); // 平面朝 +Y
 		v.color = glm::vec4(1.0f);
 		verts.push_back(v);
 	}
@@ -224,25 +233,29 @@ std::vector<MeshVertex> Mesh::makePrismVertices() {
 	std::vector<MeshVertex> verts;
 	verts.reserve(24);
 	const glm::vec4 white(1.0f);
-	auto addQuad = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, const glm::vec3& d) {
+	auto addQuad = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c,
+		const glm::vec3& d, const glm::vec3& n) {
 		const glm::vec3 pts[4] = { a, b, c, d };
 		for (int i = 0; i < 4; ++i) {
 			MeshVertex v;
 			v.pos = pts[i];
 			v.uv = faceUV[i];
+			v.normal = n;
 			v.color = white;
 			verts.push_back(v);
 		}
 	};
-	// 3 个侧面：从外看 CCW（底i → 底j → 顶j → 顶i）。
+	// 3 个侧面：从外看 CCW（底i → 底j → 顶j → 顶i），法线水平朝外。
 	for (int i = 0; i < 3; ++i) {
 		const int j = (i + 1) % 3;
-		addQuad(bottomPts[i], bottomPts[j], topPts[j], topPts[i]);
+		const glm::vec3 sideNormal = glm::normalize(glm::vec3(
+			bottomPts[i].x + bottomPts[j].x, 0.0f, bottomPts[i].z + bottomPts[j].z));
+		addQuad(bottomPts[i], bottomPts[j], topPts[j], topPts[i], sideNormal);
 	}
 	// 顶面：从 +Y 看 CCW（top[0]→top[1]→top[2]，最后一点重复构成 quad）。
-	addQuad(topPts[0], topPts[1], topPts[2], topPts[2]);
+	addQuad(topPts[0], topPts[1], topPts[2], topPts[2], glm::vec3(0, 1, 0));
 	// 底面：从 -Y 看 CCW（bottom[0]→bottom[2]→bottom[1] 顺序反转，法线朝 -Y）。
-	addQuad(bottomPts[0], bottomPts[2], bottomPts[1], bottomPts[1]);
+	addQuad(bottomPts[0], bottomPts[2], bottomPts[1], bottomPts[1], glm::vec3(0, -1, 0));
 	return verts;
 }
 
