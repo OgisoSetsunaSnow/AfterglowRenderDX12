@@ -47,6 +47,13 @@ int main() {
 		std::cout << "[AfterglowRender DX12] compiled " << outlineFile
 			<< " (vs " << outlineVs.size() << "B, ps " << outlinePs.size() << "B)" << std::endl;
 
+		// 遗留问题 #1：SkySphere 独立 Unlit shader（对齐参考项目 SkySphere.mat = SkySphere_VS + Unlit_FS）。
+		const std::string skyFile = "Shaders/SkySphere.hlsl";
+		const auto skyVs = shader::compileFromFile(skyFile, vsOptions);
+		const auto skyPs = shader::compileFromFile(skyFile, psOptions);
+		std::cout << "[AfterglowRender DX12] compiled " << skyFile
+			<< " (vs " << skyVs.size() << "B, ps " << skyPs.size() << "B)" << std::endl;
+
 		// 阶段 10：后处理 shader（全屏 pass）。
 		const std::string postFile = "Shaders/PostProcess.hlsl";
 		const auto postVs = shader::compileFromFile(postFile, vsOptions);
@@ -88,6 +95,36 @@ int main() {
 		std::cout << "[AfterglowRender DX12] loaded BattleMage decal texture "
 			<< battleMageDecal.width() << "x" << battleMageDecal.height() << std::endl;
 
+		// SkySphere 天空贴图（参考项目 Shared/Textures/DefaultSky.png）。
+		Texture skyTexture;
+		skyTexture.load(context, "../vsbuild/Assets/Shared/Textures/DefaultSky.png");
+		std::cout << "[AfterglowRender DX12] loaded sky texture "
+			<< skyTexture.width() << "x" << skyTexture.height() << std::endl;
+
+		// Yvonne（第二个角色）：albedo 纹理（参考项目 Yvonne*.mati 的 albedoTex 引用）。
+		Texture yvonneBody, yvonneCloth1, yvonneCloth2, yvonneFace, yvonneIris, yvonneHair;
+		const char* yvTexDir = "../vsbuild/Assets/Characters/Yvonne/Textures/";
+		yvonneBody.load(context, std::string(yvTexDir) + "T_actor_yvonne_body_01_D.png");   // mesh 0 Body / 1 Neck
+		yvonneCloth1.load(context, std::string(yvTexDir) + "T_actor_yvonne_cloth_01_D.png"); // mesh 2 Cloth / 4 ThinFilm / 5 Cloth
+		yvonneCloth2.load(context, std::string(yvTexDir) + "T_actor_yvonne_cloth_02_D.png"); // mesh 3 Tail
+		yvonneFace.load(context, std::string(yvTexDir) + "T_actor_yvonne_face_01_D.png");    // mesh 7 Face / 8 Eyelash
+		yvonneIris.load(context, std::string(yvTexDir) + "T_actor_yvonne_iris_01_D.png");    // mesh 9 Iris
+		yvonneHair.load(context, std::string(yvTexDir) + "T_actor_yvonne_hair_01_D.png");    // mesh 10 Hair
+		std::cout << "[AfterglowRender DX12] loaded Yvonne textures "
+			<< yvonneBody.width() << "x" << yvonneBody.height()
+			<< " / " << yvonneHair.width() << "x" << yvonneHair.height() << std::endl;
+
+		// 共享 SRV 堆：D3D12 同一时刻只能设置一个 CBV_SRV_UAV 堆，所有 RT 的 SRV 放一起。
+		// index 0=offscreen, 1=downSampled, 2=horizontalBlur, 3=combined, 4=depth(10d)。
+		Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> sharedSrvHeap;
+		D3D12_DESCRIPTOR_HEAP_DESC sharedDesc{};
+		sharedDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		sharedDesc.NumDescriptors = 5;
+		sharedDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+		if (FAILED(context.device()->CreateDescriptorHeap(&sharedDesc, IID_PPV_ARGS(&sharedSrvHeap)))) {
+			throw std::runtime_error("Failed to create shared SRV heap");
+		}
+
 		// ---- 创建网格 ----
 		std::vector<Mesh> meshes(4);
 		meshes[0].create(context, Mesh::makeCubeVertices(), Mesh::makeCubeIndices());
@@ -96,25 +133,16 @@ int main() {
 		meshes[3].create(context, Mesh::makePrismVertices(), Mesh::makePrismIndices());
 
 		MeshRenderer meshRenderer(context, vs, ps,
-			{ &texture, &battleMageBody, &battleMageDecal }, 256, outlineVs, outlinePs,
-			DXGI_FORMAT_R16G16B16A16_FLOAT); // 渲染到 HDR 离屏 sceneColor
+			{ &texture, &battleMageBody, &battleMageDecal, &skyTexture,
+			  &yvonneBody, &yvonneCloth1, &yvonneCloth2, &yvonneFace, &yvonneIris, &yvonneHair },
+			256, outlineVs, outlinePs,
+			DXGI_FORMAT_R16G16B16A16_FLOAT, sharedSrvHeap.Get(), 4, skyVs, skyPs); // HDR 离屏 + depth SRV(10d) + SkySphere
 
 		// 阶段 8：方向光（左上角照向场景）。
 		meshRenderer.setLight(glm::normalize(glm::vec3(0.4f, 1.0f, 0.3f)),
 			glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(0.12f, 0.12f, 0.15f));
 
 		// 阶段 10：离屏 sceneColor + 后处理。
-		// 共享 SRV 堆：D3D12 同一时刻只能设置一个 CBV_SRV_UAV 堆，所有 RT 的 SRV 放一起。
-		// index 0=offscreen, 1=downSampled, 2=horizontalBlur, 3=combined。
-		Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> sharedSrvHeap;
-		D3D12_DESCRIPTOR_HEAP_DESC sharedDesc{};
-		sharedDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-		sharedDesc.NumDescriptors = 4;
-		sharedDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-		if (FAILED(context.device()->CreateDescriptorHeap(&sharedDesc, IID_PPV_ARGS(&sharedSrvHeap)))) {
-			throw std::runtime_error("Failed to create shared SRV heap");
-		}
-
 		OffscreenRT offscreen;
 		offscreen.create(context, 0, 0, sharedSrvHeap.Get(), 0, nullptr);
 		PostProcess postProcess(context, postVs, postPs);
@@ -140,6 +168,25 @@ int main() {
 		std::cout << "[AfterglowRender DX12] loaded Box.fbx: "
 			<< boxModel.meshes().size() << " mesh(es)" << std::endl;
 
+		// 参考项目 Shared/Models 简单模型（远距离放置，验证雾效果）。
+		Model sphereModel, planeModel, prismModel;
+		sphereModel.load(context, "../vsbuild/Assets/Shared/Models/Sphere.fbx");
+		planeModel.load(context, "../vsbuild/Assets/Shared/Models/Plane.fbx");
+		prismModel.load(context, "../vsbuild/Assets/Shared/Models/HexagonalPrism.fbx");
+		std::cout << "[AfterglowRender DX12] loaded shared models (Sphere/Plane/Prism): "
+			<< sphereModel.meshes().size() << "/" << planeModel.meshes().size() << "/"
+			<< prismModel.meshes().size() << " mesh(es)" << std::endl;
+
+		// SkySphere 天空盒（参考项目 Shared/Models/SkySphere.fbx，scale 大包住场景）。
+		Model skySphereModel;
+		skySphereModel.load(context, "../vsbuild/Assets/Shared/Models/SkySphere.fbx");
+		std::cout << "[AfterglowRender DX12] loaded SkySphere: "
+			<< skySphereModel.meshes().size() << " mesh(es), materials=[";
+		for (std::size_t i = 0; i < skySphereModel.materialNames().size(); ++i) {
+			std::cout << skySphereModel.materialNames()[i] << (i+1 < skySphereModel.materialNames().size() ? "," : "");
+		}
+		std::cout << "]" << std::endl;
+
 		Model battleMageModel;
 		battleMageModel.load(context, "../vsbuild/Assets/Characters/BattleMage/BattleMage.fbx");
 		std::cout << "[AfterglowRender DX12] loaded BattleMage.fbx: "
@@ -149,8 +196,19 @@ int main() {
 				<< battleMageModel.materialNames()[i] << "'" << std::endl;
 		}
 
+		// Yvonne（第二个角色，参考项目 Assets/Characters/Yvonne/Yvonne.fbx，无 scale）。
+		Model yvonneModel;
+		yvonneModel.load(context, "../vsbuild/Assets/Characters/Yvonne/Yvonne.fbx");
+		std::cout << "[AfterglowRender DX12] loaded Yvonne.fbx: "
+			<< yvonneModel.meshes().size() << " mesh(es)" << std::endl;
+
 		// ---- 场景物体（mesh + 位置 + 材质颜色） ----
 		std::vector<DrawItem> items = {
+			// SkySphere 天空盒（遗留 #1 修复）：SkySphere.fbx 半径 50000，scale 0.01 → 世界半径 500
+			// （参考项目 SkySphere scale 0.01）。SkySphere shader 使球心跟随相机（相机永远在球内）。
+			// 必须画在 items 最前（0 号），否则 disable-depth 球后画会覆盖所有物体。
+			{ &skySphereModel.meshes()[0], glm::scale(glm::mat4(1.0f), glm::vec3(0.01f)),
+				glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), 3, false, false, 0.0f, true },
 			{ &meshes[0], glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
 				glm::vec4(1.0f, 0.35f, 0.35f, 1.0f) },   // 立方体（中）
 			{ &meshes[1], glm::translate(glm::mat4(1.0f), glm::vec3(-3.5f, 1.0f, 0.0f)),
@@ -161,6 +219,13 @@ int main() {
 				glm::vec4(0.9f, 0.5f, 0.2f, 1.0f) },     // Box.fbx（底部对齐地面）
 			{ &meshes[2], glm::mat4(1.0f),
 				glm::vec4(0.55f, 0.55f, 0.55f, 1.0f) },  // 地面
+			// 参考项目 shared models（远距离，验证雾效果 10d-1）
+			{ &sphereModel.meshes()[0], glm::translate(glm::mat4(1.0f), glm::vec3(8.0f, 1.0f, -8.0f)),
+				glm::vec4(0.3f, 0.7f, 0.9f, 1.0f) },    // 远景 Sphere（蓝）
+			{ &prismModel.meshes()[0], glm::translate(glm::mat4(1.0f), glm::vec3(-7.0f, 0.5f, -9.0f)),
+				glm::vec4(0.7f, 0.4f, 0.6f, 1.0f) },    // 远景 Prism（紫）
+		{ &planeModel.meshes()[0], glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 0.0f, -14.0f)),
+			glm::vec4(0.45f, 0.45f, 0.5f, 1.0f) },   // 远景 Plane（灰）
 		};
 
 		// BattleMage：放场景后方（相机看向 -Z 方向），正面绕 X 转 -90° 朝 +Z 面向相机。
@@ -176,8 +241,37 @@ int main() {
 			if (matName.find("Decal") != std::string::npos || matName.find("decal") != std::string::npos) {
 				srvIndex = 2;
 			}
+			// BattleMageOutline.mati: outline on all meshes (hair/双马尾 in mesh2/3).
+			// SkySphere LESS 修复后 outline 不再被天空盒覆盖.
+			// width 5 (thinner), black.
 			items.push_back({ &battleMageModel.meshes()[i], battleMageBase,
-				glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), srvIndex, true, 10.0f });
+				glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), srvIndex, true, false, 5.0f,
+				false, glm::vec3(0.0f, 0.0f, 0.0f) }); // all meshes outline, width 5, black
+		}
+
+		// Yvonne：按 mesh index 绑定 albedo 纹理（对齐参考项目 yvonneMesh.setMaterial 的 mesh 顺序）。
+		// 纹理 srvIndex：4=body, 5=cloth1, 6=cloth2, 7=face, 8=iris, 9=hair。
+		// mesh 6 EyeShadow / mesh 11 HairShadow 在参考项目无 albedo 纹理 → 用深色 tint 近似纯色。
+		// 描边（对齐参考项目 pass1 材质）：mesh 0 Body / 2 Cloth / 3 Tail / 5 Cloth / 10 Hair 挂 outline。
+		// outlineWidth=16, outlineColor：Body(0.12,0.02,0.04) / Cloth(0,0,0) / Hair(0.05,0,0.08)。mesh4 ThinFilm 参考项目用 Ignore 不描边。
+		const glm::mat4 yvonneBase = glm::rotate(
+			glm::translate(glm::mat4(1.0f), glm::vec3(-4.0f, 0.0f, 5.0f)),
+			glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		static const UINT yvSrv[12] = { 4, 4, 5, 6, 5, 5, 4, 7, 7, 8, 9, 9 };
+		static const bool yvOutlineOn[12] = { true, false, true, true, false, true, false, false, false, false, true, false };
+		static const glm::vec3 yvOutlineColor[12] = {
+			glm::vec3(0.12f, 0.02f, 0.04f), glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f),
+			glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f),
+			glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.05f, 0.0f, 0.08f), glm::vec3(0.0f)
+		};
+		for (std::size_t i = 0; i < yvonneModel.meshes().size(); ++i) {
+			const UINT srv = (i < 12) ? yvSrv[i] : 4;
+			glm::vec4 tint(1.0f);
+			if (i == 6) tint = glm::vec4(0.05f, 0.04f, 0.05f, 1.0f); // EyeShadow
+			if (i == 11) tint = glm::vec4(0.02f, 0.002f, 0.0f, 1.0f); // HairShadow (shadowColor)
+			const bool outlineOn = (i < 12) ? yvOutlineOn[i] : false;
+			items.push_back({ &yvonneModel.meshes()[i], yvonneBase, tint, srv,
+				outlineOn, false, 5.0f, false, yvOutlineColor[i] }); // width 5 (thinner)
 		}
 
 		// 相机：F 键在轨道/自由之间切换。
@@ -255,12 +349,13 @@ int main() {
 			}
 
 			// 物体动画：立方体旋转、球自转、棱柱静止、地面固定。
-			items[0].model = glm::rotate(
-				glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-				t * 0.8f, glm::vec3(0.4f, 1.0f, 0.2f));
+			// SkySphere(items[0]) 固定原点不更新。
 			items[1].model = glm::rotate(
+				glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+				t * 0.8f, glm::vec3(0.4f, 1.0f, 0.2f));   // 立方体（中）
+			items[2].model = glm::rotate(
 				glm::translate(glm::mat4(1.0f), glm::vec3(-3.5f, 1.0f, 0.0f)),
-				t * 0.6f, glm::vec3(0.0f, 1.0f, 0.0f));
+				t * 0.6f, glm::vec3(0.0f, 1.0f, 0.0f));   // 球（左）
 
 			const glm::mat4 proj = (cameraMode == CameraMode::Orbit)
 				? orbitCamera.projMatrix(static_cast<float>(context.width()) / static_cast<float>(context.height()))
@@ -274,8 +369,9 @@ int main() {
 			context.commandList()->ClearRenderTargetView(offscreen.rtvHandle(), clearColor, 0, nullptr);
 			meshRenderer.render(view, proj, items, offscreen.rtvHandle());
 
-			// 后处理：采样 sceneColor → 输出到交换链后台缓冲。
+			// 后处理：采样 sceneColor + depth → 输出到交换链后台缓冲。
 			offscreen.transitionColor(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+			meshRenderer.transitionDepthTo(D3D12_RESOURCE_STATE_DEPTH_READ); // depth 供雾采样
 
 			// 阶段 10b：Bloom（DownSampling → HorizontalBlur → VerticalBlur/Combined）。
 			downSampled.transitionColor(D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -298,10 +394,19 @@ int main() {
 
 			context.transitionCurrentBackBuffer(D3D12_RESOURCE_STATE_PRESENT,
 				D3D12_RESOURCE_STATE_RENDER_TARGET);
+			const glm::mat4 invView = glm::inverse(view);
+			const glm::vec3 cameraPos(invView[3]);
+			// 从 proj 提取 near/far（glm RH 透视）。
+			const float nearZ = proj[3][2] / (proj[2][2] - 1.0f);
+			const float farZ = proj[3][2] / (proj[2][2] + 1.0f);
 			postProcess.render(sharedSrvHeap.Get(), offscreen.srvHandle(),
-				combined.srvHandle(), context.currentRtv());
+				combined.srvHandle(), meshRenderer.depthSrvHandle(),
+				context.currentRtv(), cameraPos, nearZ, farZ);
 			context.transitionCurrentBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET,
 				D3D12_RESOURCE_STATE_PRESENT);
+
+			// depth 恢复为渲染写入状态，供下一帧场景深度测试。
+			meshRenderer.transitionDepthTo(D3D12_RESOURCE_STATE_DEPTH_WRITE);
 
 			context.endFrame();
 		}

@@ -18,7 +18,7 @@ struct PerObjectCB {
 	glm::mat4 invTransModel; // 128-192（world 的逆转置，法线/描边外扩用）
 	glm::vec4 baseColor;     // 192-208
 	float outlineWidth;      // 208-212（描边外扩宽度，世界单位）
-	glm::vec3 _pad;          // 212-224
+	glm::vec3 outlineColor;  // 212-224（描边颜色，参考项目 EndfieldOutline.outlineColor）
 };
 
 // 每帧共享的常量缓冲（与 shader cbuffer Frame 对应）。
@@ -39,7 +39,10 @@ struct DrawItem {
 	glm::vec4 color{ 1.0f };
 	UINT srvIndex = 0;      // 使用的纹理在 SRV heap 中的索引
 	bool outline = false;   // 是否绘制描边（对齐参考项目：仅模型材质启用，平面/测试物体无）
-	float outlineWidth = 10.0f; // 描边外扩宽度（参考项目 ArcOutline.outlineWidth=10）
+	bool disableDepth = false; // 禁用深度测试（天空盒/全屏：depth=1 会被物体 depth=浅 挡住）
+	float outlineWidth = 10.0f; // 描边外扩宽度（参考项目 ArcOutline.outlineWidth=10 / EndfieldOutline=16）
+	bool sky = false;       // SkySphere 专用：用 Unlit 天空 shader（参考项目 SkySphere.mat）
+	glm::vec3 outlineColor{ 0.0f }; // 描边颜色（参考项目 outlineColor：Yvonne Body 深红棕/Cloth 黑/Hair 深紫）
 };
 
 // 网格渲染器：支持多物体绘制 + 多纹理。
@@ -53,7 +56,11 @@ public:
 		UINT maxObjects,
 		const std::vector<std::uint8_t>& outlineVsBytes = {},
 		const std::vector<std::uint8_t>& outlinePsBytes = {},
-		DXGI_FORMAT rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM); // 默认后台缓冲；离屏 HDR 传 R16G16B16A16_FLOAT
+		DXGI_FORMAT rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM, // 默认后台缓冲；离屏 HDR 传 R16G16B16A16_FLOAT
+		ID3D12DescriptorHeap* sharedSrvHeap = nullptr,       // 阶段 10d：depth SRV 写入共享堆
+		UINT depthSrvIndex = 0,
+		const std::vector<std::uint8_t>& skyVsBytes = {},    // SkySphere 专用 Unlit shader（参考项目 SkySphere.mat）
+		const std::vector<std::uint8_t>& skyPsBytes = {});
 	~MeshRenderer();
 
 	MeshRenderer(const MeshRenderer&) = delete;
@@ -68,11 +75,19 @@ public:
 	void render(const glm::mat4& view, const glm::mat4& proj, const std::vector<DrawItem>& items,
 		const D3D12_CPU_DESCRIPTOR_HANDLE& rtv);
 
+	// 阶段 10d：depth 的 SRV（供后处理采样），及资源状态切换。
+	D3D12_GPU_DESCRIPTOR_HANDLE depthSrvHandle() const { return _depthSrvGpu; }
+	void transitionDepthTo(D3D12_RESOURCE_STATES newState);
+
 private:
 	void createRootSignature();
 	void createPipelineState(const std::vector<std::uint8_t>& vs, const std::vector<std::uint8_t>& ps);
 	// 创建描边 PSO（对齐参考项目 ArcOutline.mat：CullMode=FRONT + CCW front）。
 	void createOutlinePipelineState(const std::vector<std::uint8_t>& vs, const std::vector<std::uint8_t>& ps);
+	// 创建无深度 PSO（天空盒：DepthEnable=FALSE，深度不测不写）。
+	void createNoDepthPipelineState(const std::vector<std::uint8_t>& vs, const std::vector<std::uint8_t>& ps);
+	// 创建 SkySphere PSO（Unlit 天空 shader + CullMode=BACK + 深度 ALWAYS 不写，对齐参考项目 SkySphere.mat）。
+	void createSkyPipelineState(const std::vector<std::uint8_t>& vs, const std::vector<std::uint8_t>& ps);
 	void createDepthBuffer();
 	void createTextureDescriptors(const std::vector<Texture*>& textures);
 	void createPerObjectCbv(UINT maxObjects);
@@ -83,10 +98,16 @@ private:
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> _rootSignature;
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> _pso;
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> _psoNoDepth; // 无深度 PSO（DepthEnable=FALSE）
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> _psoSky;     // SkySphere PSO（Unlit + CullMode=BACK + 深度 ALWAYS 不写）
 	Microsoft::WRL::ComPtr<ID3D12PipelineState> _outlinePso; // 描边 PSO（剔正面，画远侧）
 
 	Microsoft::WRL::ComPtr<ID3D12Resource> _depthBuffer;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> _dsvHeap;
+	ID3D12DescriptorHeap* _sharedSrvHeap = nullptr; // 阶段 10d：depth SRV 写入共享堆
+	UINT _depthSrvIndex = 0;
+	D3D12_GPU_DESCRIPTOR_HANDLE _depthSrvGpu{}; // depth SRV（供后处理采样）
+	D3D12_RESOURCE_STATES _depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> _srvHeap;     // CBV_SRV_UAV，含所有纹理 SRV
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> _samplerHeap; // 采样器堆

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iostream>
 #include <stdexcept>
 
 #define CHECK_OK(hr, msg) do { if (FAILED(hr)) throw std::runtime_error(msg); } while (0)
@@ -19,12 +20,21 @@ MeshRenderer::MeshRenderer(D3D12Context& context,
 	UINT maxObjects,
 	const std::vector<std::uint8_t>& outlineVsBytes,
 	const std::vector<std::uint8_t>& outlinePsBytes,
-	DXGI_FORMAT rtvFormat)
-	: _context(context), _maxObjects(maxObjects), _rtvFormat(rtvFormat) {
+	DXGI_FORMAT rtvFormat,
+	ID3D12DescriptorHeap* sharedSrvHeap,
+	UINT depthSrvIndex,
+	const std::vector<std::uint8_t>& skyVsBytes,
+	const std::vector<std::uint8_t>& skyPsBytes)
+	: _context(context), _maxObjects(maxObjects), _rtvFormat(rtvFormat),
+	_sharedSrvHeap(sharedSrvHeap), _depthSrvIndex(depthSrvIndex) {
 	createRootSignature();
 	createPipelineState(vsBytes, psBytes);
 	if (!outlineVsBytes.empty() && !outlinePsBytes.empty()) {
 		createOutlinePipelineState(outlineVsBytes, outlinePsBytes);
+		createNoDepthPipelineState(vsBytes, psBytes);
+	}
+	if (!skyVsBytes.empty() && !skyPsBytes.empty()) {
+		createSkyPipelineState(skyVsBytes, skyPsBytes);
 	}
 	createDepthBuffer();
 	createTextureDescriptors(textures);
@@ -102,6 +112,9 @@ void MeshRenderer::createPipelineState(const std::vector<std::uint8_t>& vs, cons
 	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	psoDesc.NumRenderTargets = 1;
 	psoDesc.RTVFormats[0] = _rtvFormat;
+	// 关键：DSVFormat 必须与绑定 DSV 的资源格式一致（MeshRenderer.depthBuffer 是 D32_FLOAT）。
+	// 默认零 = UNKNOWN，与 D32_FLOAT DSV 不匹配 → D3D12 报错，draw 失败（SkySphere 一直看不见的根因）。
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 	psoDesc.SampleDesc.Count = 1;
 
 	std::array<D3D12_INPUT_ELEMENT_DESC, 4> inputLayout = { {
@@ -133,14 +146,20 @@ void MeshRenderer::createOutlinePipelineState(const std::vector<std::uint8_t>& v
 	// 对齐参考项目 ArcOutline.mat：cullMode=Front（VK_CULL_MODE_FRONT_BIT）+ CCW front。
 	// 即剔除正面、只画背面（远侧），配合 VS 沿法线外扩形成轮廓。
 	// 参考项目仅对闭合模型网格启用 outline，因此单 pass 在任意角度都正确。
+	// CullMode=FRONT + CCW front = only draw back faces (reference ArcOutline trick).
+	// Back faces expand outward along normal = silhouette outline.
 	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
 	psoDesc.RasterizerState.FrontCounterClockwise = TRUE;
+	// Normal depth (LESS + write): SkySphere covers outline correctly, outline behind foreground is hidden.
 	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 	psoDesc.SampleMask = UINT_MAX;
 	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	psoDesc.NumRenderTargets = 1;
 	psoDesc.RTVFormats[0] = _rtvFormat;
+	// 关键：DSVFormat 必须与绑定 DSV 的资源格式一致（MeshRenderer.depthBuffer 是 D32_FLOAT）。
+	// 默认零 = UNKNOWN，与 D32_FLOAT DSV 不匹配 → D3D12 报错，draw 失败（SkySphere 一直看不见的根因）。
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 	psoDesc.SampleDesc.Count = 1;
 
 	// 描边 shader 只需要 pos + normal。
@@ -154,6 +173,100 @@ void MeshRenderer::createOutlinePipelineState(const std::vector<std::uint8_t>& v
 
 	HRESULT hr = _context.device()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&_outlinePso));
 	CHECK_OK(hr, "Failed to create outline pipeline state");
+}
+
+void MeshRenderer::createNoDepthPipelineState(const std::vector<std::uint8_t>& vs,
+	const std::vector<std::uint8_t>& ps) {
+	// 与主 PSO 完全相同，但 DepthEnable=FALSE（深度不测不写），
+	// 用于天空盒/全屏：避免 depth=1 被前景物体 depth=浅 的 LESS 测试丢弃。
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+	psoDesc.pRootSignature = _rootSignature.Get();
+	psoDesc.VS = { vs.data(), vs.size() };
+	psoDesc.PS = { ps.data(), ps.size() };
+
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // 天空盒从内部看，双面
+	psoDesc.RasterizerState.FrontCounterClockwise = TRUE;
+	psoDesc.DepthStencilState.DepthEnable = TRUE; // depth test 用 LESS + 不写
+	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS; // LESS：仅画在物体/描边后面（天空 depth 0.5 > 物体 depth）
+	psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // 不写 depth
+	psoDesc.DepthStencilState.StencilEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = _rtvFormat;
+	// 关键：DSVFormat 必须与绑定 DSV 的资源格式一致（MeshRenderer.depthBuffer 是 D32_FLOAT）。
+	// 默认零 = UNKNOWN，与 D32_FLOAT DSV 不匹配 → D3D12 报错，draw 失败（SkySphere 一直看不见的根因）。
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	psoDesc.SampleDesc.Count = 1;
+
+	// 天空盒也用主 input layout（POSITION/UV/NORMAL/COLOR）。
+	psoDesc.RTVFormats[0] = _rtvFormat;
+	// 关键：DSVFormat 必须与绑定 DSV 的资源格式一致（MeshRenderer.depthBuffer 是 D32_FLOAT）。
+	// 默认零 = UNKNOWN，与 D32_FLOAT DSV 不匹配 → D3D12 报错，draw 失败（SkySphere 一直看不见的根因）。
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	psoDesc.SampleDesc.Count = 1;
+
+	// 天空盒也用主 input layout（POSITION/UV/NORMAL/COLOR）。
+	std::array<D3D12_INPUT_ELEMENT_DESC, 4> inputLayout = { {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 20,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+	} };
+	psoDesc.InputLayout = { inputLayout.data(), static_cast<UINT>(inputLayout.size()) };
+
+	HRESULT hr = _context.device()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&_psoNoDepth));
+	CHECK_OK(hr, "Failed to create no-depth pipeline state");
+}
+
+void MeshRenderer::createSkyPipelineState(const std::vector<std::uint8_t>& vs,
+	const std::vector<std::uint8_t>& ps) {
+	// SkySphere 专用 PSO，对齐参考项目 SkySphere.mat：
+	//   - vertexShader=SkySphere_VS / fragmentShader=Unlit_FS（本工程 Shaders/SkySphere.hlsl）
+	//   - cullMode:2 = Back（D3D12 语义：剔除背面，FrontCounterClockwise=TRUE 时背面=CW）
+	//   - depthWrite:false → DepthEnable=TRUE + DepthFunc=ALWAYS + DepthWriteMask=ZERO
+	//   - VS 在世界空间加相机位置 → 球心始终在相机处，内表面即 front（Back cull 保留）
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+	psoDesc.pRootSignature = _rootSignature.Get();
+	psoDesc.VS = { vs.data(), vs.size() };
+	psoDesc.PS = { ps.data(), ps.size() };
+
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK; // 参考项目 cullMode:2=Back
+	psoDesc.RasterizerState.FrontCounterClockwise = TRUE;
+	psoDesc.DepthStencilState.DepthEnable = TRUE; // depth test 用 LESS + 不写（参考项目 SkySphere depthWrite:false）
+	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS; // LESS：天空仅画在物体/描边后面，不覆盖 outline
+	psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	psoDesc.DepthStencilState.StencilEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = _rtvFormat;
+	// 关键：DSVFormat 必须与绑定 DSV 的资源格式一致（D32_FLOAT），零初始化=UNKNOWN 会导致创建失败。
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	psoDesc.SampleDesc.Count = 1;
+
+	// SkySphere shader 只需要 POSITION + TEXCOORD（对齐参考项目 vertexType:4 = VertexPT0）。
+	// 顶点缓冲 stride 仍是 48B（MeshVertex），只声明前两个属性，D3D12 按 stride 逐顶点读取。
+	std::array<D3D12_INPUT_ELEMENT_DESC, 2> inputLayout = { {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+	} };
+	psoDesc.InputLayout = { inputLayout.data(), static_cast<UINT>(inputLayout.size()) };
+
+	HRESULT hr = _context.device()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&_psoSky));
+	CHECK_OK(hr, "Failed to create sky pipeline state");
 }
 
 void MeshRenderer::createDepthBuffer() {
@@ -183,6 +296,31 @@ void MeshRenderer::createDepthBuffer() {
 	CHECK_OK(hr, "Failed to create DSV heap");
 	device->CreateDepthStencilView(_depthBuffer.Get(), nullptr,
 		_dsvHeap->GetCPUDescriptorHandleForHeapStart());
+
+	// 阶段 10d：depth 可采样（SRV 写入共享堆，供后处理雾/深度效果）。
+	if (_sharedSrvHeap) {
+		D3D12_SHADER_RESOURCE_VIEW_DESC depthSrv{};
+		depthSrv.Format = DXGI_FORMAT_R32_FLOAT; // D32_FLOAT 的只读采样格式
+		depthSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		depthSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		depthSrv.Texture2D.MipLevels = 1;
+		const UINT srvIncrement = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		D3D12_CPU_DESCRIPTOR_HANDLE cpu = _sharedSrvHeap->GetCPUDescriptorHandleForHeapStart();
+		cpu.ptr += static_cast<SIZE_T>(_depthSrvIndex) * srvIncrement;
+		device->CreateShaderResourceView(_depthBuffer.Get(), &depthSrv, cpu);
+		_depthSrvGpu = _sharedSrvHeap->GetGPUDescriptorHandleForHeapStart();
+		_depthSrvGpu.ptr += static_cast<SIZE_T>(_depthSrvIndex) * srvIncrement;
+	}
+}
+
+void MeshRenderer::transitionDepthTo(D3D12_RESOURCE_STATES newState) {
+	if (_depthState == newState) {
+		return;
+	}
+	D3D12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+		_depthBuffer.Get(), _depthState, newState);
+	_context.commandList()->ResourceBarrier(1, &barrier);
+	_depthState = newState;
 }
 
 void MeshRenderer::createTextureDescriptors(const std::vector<Texture*>& textures) {
@@ -311,6 +449,18 @@ void MeshRenderer::render(const glm::mat4& view, const glm::mat4& proj,
 		cb->invTransModel = glm::transpose(glm::inverse(item.model)); // 逆转置，法线正确变换
 		cb->baseColor = isOutline ? glm::vec4(0.0f) : item.color;
 		cb->outlineWidth = item.outlineWidth;
+		cb->outlineColor = item.outlineColor; // 描边颜色（参考项目 outlineColor，per-material）
+
+	// 主体 pass：SkySphere 用专用 Unlit PSO；天空盒/全屏用 disable-depth PSO；其他用主 PSO。
+	if (!isOutline) {
+		ID3D12PipelineState* pso = _pso.Get();
+		if (item.sky && _psoSky) {
+			pso = _psoSky.Get();
+		} else if (item.disableDepth && _psoNoDepth) {
+			pso = _psoNoDepth.Get();
+		}
+		cl->SetPipelineState(pso);
+	}
 
 		if (!isOutline) {
 			const UINT srvIndex = std::min(item.srvIndex, _srvCount - 1);
@@ -328,10 +478,12 @@ void MeshRenderer::render(const glm::mat4& view, const glm::mat4& proj,
 		cl->DrawIndexedInstanced(item.mesh->indexCount(), 1, 0, 0, 0);
 	};
 
+	// 渲染顺序：1. main pass（SkySphere/物体，深度测试）→ 2. outline pass（深度 ALWAYS + 不写，永远在物体之上）
+	// 之前 outline 先画后被 SkySphere 覆盖 → 描边颜色 = SkySphere 颜色（用户报告）。
+	// order: outline first, main second (refer ArcOutline)
 	if (_outlinePso) {
 		cl->SetPipelineState(_outlinePso.Get());
 		for (std::size_t i = 0; i < items.size() && i < _maxObjects; ++i) {
-			// 仅对显式开启 outline 的物体画描边（对齐参考项目：材质级，非全局）。
 			if (items[i].mesh && items[i].mesh->valid() && items[i].outline) {
 				drawMesh(items[i], static_cast<UINT>(i), true);
 			}

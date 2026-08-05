@@ -5,7 +5,7 @@ cbuffer PerObject : register(b0) {
 	float4x4 invTransModel; // world 的逆转置（法线变换用）
 	float4 baseColor;
 	float outlineWidth;     // 描边宽度（描边 shader 用，此处保持布局一致）
-	float3 _padPerObject;
+	float3 outlineColor;    // 描边颜色（描边 shader 用，此处保持布局一致）
 };
 
 cbuffer Frame : register(b1) {

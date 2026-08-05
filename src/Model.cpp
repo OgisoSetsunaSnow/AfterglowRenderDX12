@@ -54,6 +54,29 @@ bool Model::load(D3D12Context& context, const std::string& filePath) {
 		_materialNames.push_back(materialName);
 		std::cerr << "[Model] mesh material: '" << materialName << "'" << std::endl;
 
+		// 诊断：顶点数/UV/包围盒（排查 SkySphere 等模型数据问题）。
+		{
+			std::cerr << "[Model]   " << am->mNumVertices << " verts, "
+				<< am->mNumFaces << " faces, "
+				<< (am->HasTextureCoords(0) ? "hasUV" : "NO_UV") << std::endl;
+			if (am->HasTextureCoords(0) && am->mNumVertices > 0) {
+				glm::vec2 uvMin(1e9f), uvMax(-1e9f);
+				glm::vec3 posMin(1e9f), posMax(-1e9f);
+				for (unsigned i = 0; i < am->mNumVertices; ++i) {
+					const glm::vec2 uv(am->mTextureCoords[0][i].x, am->mTextureCoords[0][i].y);
+					uvMin = glm::min(uvMin, uv);
+					uvMax = glm::max(uvMax, uv);
+					const glm::vec3 p(am->mVertices[i].x, am->mVertices[i].y, am->mVertices[i].z);
+					posMin = glm::min(posMin, p);
+					posMax = glm::max(posMax, p);
+				}
+				std::cerr << "[Model]   uv[" << uvMin.x << "," << uvMin.y << "]~["
+					<< uvMax.x << "," << uvMax.y << "] bbox[" << posMin.x << "," << posMin.y << ","
+					<< posMin.z << "]~[" << posMax.x << "," << posMax.y << "," << posMax.z << "]"
+					<< std::endl;
+			}
+		}
+
 		std::vector<MeshVertex> vertices;
 		vertices.reserve(am->mNumVertices);
 		for (unsigned i = 0; i < am->mNumVertices; ++i) {

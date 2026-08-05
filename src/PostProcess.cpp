@@ -12,6 +12,7 @@ PostProcess::PostProcess(D3D12Context& context,
 	: _context(context) {
 	createRootSignature();
 	createPipelineState(vsBytes, psBytes);
+	createParamCbv();
 
 	// 采样器（线性 + CLAMP）。
 	auto* device = context.device();
@@ -35,32 +36,38 @@ PostProcess::PostProcess(D3D12Context& context,
 }
 
 void PostProcess::createRootSignature() {
-	D3D12_DESCRIPTOR_RANGE srvRanges[2]{};
+	// t0 sceneColor + t1 bloomCombined + t2 depth（都在共享 SRV 堆内）。
+	D3D12_DESCRIPTOR_RANGE srvRanges[3]{};
 	srvRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	srvRanges[0].NumDescriptors = 1;
-	srvRanges[0].BaseShaderRegister = 0; // t0 sceneColor
+	srvRanges[0].BaseShaderRegister = 0;
 	srvRanges[0].RegisterSpace = 0;
 
 	srvRanges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	srvRanges[1].NumDescriptors = 1;
-	srvRanges[1].BaseShaderRegister = 1; // t1 bloomCombined
+	srvRanges[1].BaseShaderRegister = 1;
 	srvRanges[1].RegisterSpace = 0;
+
+	srvRanges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	srvRanges[2].NumDescriptors = 1;
+	srvRanges[2].BaseShaderRegister = 2;
+	srvRanges[2].RegisterSpace = 0;
 
 	D3D12_DESCRIPTOR_RANGE samplerRange{};
 	samplerRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
 	samplerRange.NumDescriptors = 1;
-	samplerRange.BaseShaderRegister = 0; // s0
+	samplerRange.BaseShaderRegister = 0;
 	samplerRange.RegisterSpace = 0;
 
 	D3D12_ROOT_PARAMETER params[3]{};
-	params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-	params[0].DescriptorTable.NumDescriptorRanges = 1;
-	params[0].DescriptorTable.pDescriptorRanges = &srvRanges[0];
+	params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	params[0].Descriptor.ShaderRegister = 0; // b0：相机/雾参数
+	params[0].Descriptor.RegisterSpace = 0;
 	params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 	params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-	params[1].DescriptorTable.NumDescriptorRanges = 1;
-	params[1].DescriptorTable.pDescriptorRanges = &srvRanges[1];
+	params[1].DescriptorTable.NumDescriptorRanges = 3;
+	params[1].DescriptorTable.pDescriptorRanges = srvRanges;
 	params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 	params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -107,10 +114,21 @@ void PostProcess::createPipelineState(const std::vector<std::uint8_t>& vs,
 		"Failed to create post-process pipeline state");
 }
 
+void PostProcess::createParamCbv() {
+	auto* device = _context.device();
+	const CD3DX12_HEAP_PROPERTIES uploadHeap(D3D12_HEAP_TYPE_UPLOAD);
+	const CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(256);
+	CHECK_OK(device->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&_paramCbv)),
+		"Failed to create post-process param CBV");
+}
+
 void PostProcess::render(ID3D12DescriptorHeap* srvHeap,
 	D3D12_GPU_DESCRIPTOR_HANDLE sceneSrv,
 	D3D12_GPU_DESCRIPTOR_HANDLE bloomSrv,
-	const D3D12_CPU_DESCRIPTOR_HANDLE& rtv) {
+	D3D12_GPU_DESCRIPTOR_HANDLE depthSrv,
+	const D3D12_CPU_DESCRIPTOR_HANDLE& rtv,
+	const glm::vec3& cameraPos, float nearZ, float farZ) {
 	auto* cl = _context.commandList();
 	const UINT w = _context.width();
 	const UINT h = _context.height();
@@ -120,14 +138,34 @@ void PostProcess::render(ID3D12DescriptorHeap* srvHeap,
 	cl->RSSetScissorRects(1, &scissor);
 	cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
 
-	// sceneSrv 与 bloomSrv 都在同一个 srvHeap 中（D3D12 限制：一个 CBV_SRV_UAV 堆）。
+	// sceneSrv/bloomSrv/depthSrv 都在同一个 srvHeap（D3D12 限制：一个 CBV_SRV_UAV 堆）。
 	ID3D12DescriptorHeap* const heaps[] = { srvHeap, _samplerHeap.Get() };
 	cl->SetDescriptorHeaps(2, heaps);
+	// 必须先 SetGraphicsRootSignature，再 Set 各根参数（否则用上一个 PSO 的根签名）。
 	cl->SetGraphicsRootSignature(_rootSignature.Get());
 	cl->SetPipelineState(_pso.Get());
 	cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	cl->SetGraphicsRootDescriptorTable(0, sceneSrv);
-	cl->SetGraphicsRootDescriptorTable(1, bloomSrv);
+
+	// b0：相机/雾参数。
+	struct PostParams {
+		glm::vec4 cameraPosition;
+		glm::vec4 fogColor;
+		float nearZ;
+		float farZ;
+		float fogDensity;
+		float pad;
+	};
+	PostParams* params = nullptr;
+	_paramCbv->Map(0, nullptr, reinterpret_cast<void**>(&params));
+	params->cameraPosition = glm::vec4(cameraPos, 1.0f);
+	params->fogColor = glm::vec4(0.35f, 0.4f, 0.5f, 1.0f); // 雾色（冷灰蓝）
+	params->nearZ = nearZ;
+	params->farZ = farZ;
+	params->fogDensity = 0.08f;
+	params->pad = 0.0f;
+	_paramCbv->Unmap(0, nullptr);
+	cl->SetGraphicsRootConstantBufferView(0, _paramCbv->GetGPUVirtualAddress());
+	cl->SetGraphicsRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());
 	cl->SetGraphicsRootDescriptorTable(2, _samplerHeap->GetGPUDescriptorHandleForHeapStart());
 	cl->DrawInstanced(3, 1, 0, 0);
 }

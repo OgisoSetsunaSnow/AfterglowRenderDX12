@@ -248,6 +248,18 @@ struct MeshVertex {
 
 **索引类型**：`uint16_t`（单 mesh 顶点数 < 65536 限制；后续大模型需 32 位索引）。
 
+### 4.9 后处理（阶段 10，`OffscreenRT` / `FullScreenPass` / `PostProcess`）
+
+**渲染链**：场景 → `OffscreenRT`(HDR R16G16B16A16_FLOAT sceneColor) → DownSampling(1/2) → HorizontalBlur → VerticalBlur/Combined → PostProcess(全屏) → swapchain。
+
+- **OffscreenRT**：离屏 RT（RTV + SRV）。D3D12 同一时刻只能有一个 CBV_SRV_UAV 堆 → 多个 RT 的 SRV 必须写同一个**共享堆**（`create(context,w,h,sharedSrvHeap,index)`）。
+- **FullScreenPass**：通用全屏 pass（1 SRV + sampler），用于 bloom 各 pass。
+- **PostProcess**：全屏三角形（`SV_VertexID` 生成，等价参考项目 PostProcess_VS），合成 sceneColor + bloomCombinedTexture + tonemap。
+- **Bloom**（参考项目 DownSampling/HorizontalBlur/VerticalBlurCombination）：2x2 box 降采样 → 水平高斯（`gaussianSigma3` 15-tap，乘 bloomIntensity）→ 垂直高斯。
+- **ACES tonemap**：`PostProcess.hlsl` 内 Narkowicz Fitted ACES（`mul(InputMat)→RRT+ODT拟合→mul(OutputMat)→saturate`）。
+
+**10c 备注**：参考项目 Chromatics ACES2（LUT compute 烘焙 + ACESTables）为**未完成实现**——`ACESOutParams`/`ACESReachMTable` 等 SSBO 在 HLSL 中只有使用、无声明（全仓库确认），shader 无法编译，Chromatics compute 从未工作。因此无法复现，改用行业标准 Narkowicz ACES 达成 tonemap 效果。
+
 ### 4.6 MeshRenderer（`MeshRenderer.h/cpp`）
 
 **职责**：图形管线（根签名 + PSO）+ 多物体/多纹理绘制。
@@ -474,10 +486,11 @@ float4 PSMain(PSIn input) : SV_TARGET {
 [✓] 阶段 6-7：assimp 模型 + 多材质纹理（BattleMage）
 [✓] 阶段 8：法线数据（MeshVertex + normal）→ 方向光 + Toon shading（2026-08-04）
 [✓] 阶段 9：描边（Outline pass，单 pass 对齐参考项目 ArcOutline，材质级）（2026-08-04）
-[ ] 阶段 10：后处理（bloom / ACES tonemap）
-  [✓] 10a：离屏 sceneColor(HDR) + 全屏 PostProcess pass（2026-08-04）
-  [✓] 10b：Bloom（DownSampling + HorizontalBlur + VerticalBlur/Combined）（2026-08-04）
-  [ ] 10c：ACES tonemap（LUT compute 烘焙 + LUTMapping）
+[✓] 阶段 10：后处理（bloom / ACES tonemap）（2026-08-04）
+  [✓] 10a：离屏 sceneColor(HDR) + 全屏 PostProcess pass
+  [✓] 10b：Bloom（DownSampling + HorizontalBlur + VerticalBlur/Combined）
+  [✓] 10c：ACES tonemap（Narkowicz Fitted ACES 公式；参考项目 Chromatics ACES2 为未完成实现，见 10c 备注）
+  [✓] 10d：depth 采样（可采样 D32 depth + 距离雾）（2026-08-04）
 [ ] 阶段 11：多 pass 框架（Forward / Compute / UI）→ 向参考项目管线靠拢
 [ ] 阶段 12：OpenImageIO / EXR HDR 支持
 ```
