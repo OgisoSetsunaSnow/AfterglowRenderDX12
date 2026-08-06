@@ -16,7 +16,7 @@ constexpr float kPi = 3.14159265358979323846f;
 
 void Mesh::create(D3D12Context& context,
 	const std::vector<MeshVertex>& vertices,
-	const std::vector<std::uint16_t>& indices) {
+	const std::vector<std::uint32_t>& indices) {
 	if (vertices.empty() || indices.empty()) {
 		throw std::runtime_error("Mesh has empty geometry");
 	}
@@ -26,7 +26,7 @@ void Mesh::create(D3D12Context& context,
 	auto* cl = context.commandList();
 
 	const std::uint64_t vbSize = sizeof(MeshVertex) * vertices.size();
-	const std::uint64_t ibSize = sizeof(std::uint16_t) * indices.size();
+	const std::uint64_t ibSize = sizeof(std::uint32_t) * indices.size();
 
 	const CD3DX12_HEAP_PROPERTIES defaultHeap(D3D12_HEAP_TYPE_DEFAULT);
 	const CD3DX12_RESOURCE_DESC vbDesc = CD3DX12_RESOURCE_DESC::Buffer(vbSize);
@@ -85,7 +85,7 @@ void Mesh::create(D3D12Context& context,
 
 	_ibView.BufferLocation = _indexBuffer->GetGPUVirtualAddress();
 	_ibView.SizeInBytes = static_cast<UINT>(ibSize);
-	_ibView.Format = DXGI_FORMAT_R16_UINT;
+	_ibView.Format = DXGI_FORMAT_R32_UINT; // 32 位索引，支持 >65535 顶点
 	_indexCount = static_cast<std::uint32_t>(indices.size());
 }
 
@@ -129,11 +129,11 @@ std::vector<MeshVertex> Mesh::makeCubeVertices() {
 	return verts;
 }
 
-std::vector<std::uint16_t> Mesh::makeCubeIndices() {
-	std::vector<std::uint16_t> indices;
+std::vector<std::uint32_t> Mesh::makeCubeIndices() {
+	std::vector<std::uint32_t> indices;
 	indices.reserve(36);
-	for (std::uint16_t f = 0; f < 6; ++f) {
-		const std::uint16_t b = f * 4;
+	for (std::uint32_t f = 0; f < 6; ++f) {
+		const std::uint32_t b = f * 4;
 		indices.push_back(b + 0);
 		indices.push_back(b + 1);
 		indices.push_back(b + 2);
@@ -163,13 +163,13 @@ std::vector<MeshVertex> Mesh::makeSphereVertices(int stacks, int slices) {
 	return verts;
 }
 
-std::vector<std::uint16_t> Mesh::makeSphereIndices(int stacks, int slices) {
-	std::vector<std::uint16_t> indices;
+std::vector<std::uint32_t> Mesh::makeSphereIndices(int stacks, int slices) {
+	std::vector<std::uint32_t> indices;
 	indices.reserve(static_cast<std::size_t>(stacks) * slices * 6);
 	for (int s = 0; s < stacks; ++s) {
 		for (int sl = 0; sl < slices; ++sl) {
-			const std::uint16_t a = static_cast<std::uint16_t>(s * (slices + 1) + sl);
-			const std::uint16_t b = static_cast<std::uint16_t>(a + slices + 1);
+			const std::uint32_t a = static_cast<std::uint32_t>(s * (slices + 1) + sl);
+			const std::uint32_t b = static_cast<std::uint32_t>(a + slices + 1);
 			indices.push_back(a);
 			indices.push_back(b);
 			indices.push_back(a + 1);
@@ -207,7 +207,7 @@ std::vector<MeshVertex> Mesh::makePlaneVertices(float size) {
 	return verts;
 }
 
-std::vector<std::uint16_t> Mesh::makePlaneIndices() {
+std::vector<std::uint32_t> Mesh::makePlaneIndices() {
 	return { 0, 1, 2, 0, 2, 3 };
 }
 
@@ -259,13 +259,13 @@ std::vector<MeshVertex> Mesh::makePrismVertices() {
 	return verts;
 }
 
-std::vector<std::uint16_t> Mesh::makePrismIndices() {
+std::vector<std::uint32_t> Mesh::makePrismIndices() {
 	// 6 面 × 6 索引 = 36。
-	std::vector<std::uint16_t> indices;
+	std::vector<std::uint32_t> indices;
 	indices.reserve(36);
 	// 3 个侧面（顶点 0-11，每面 4 顶点 quad）。
 	for (int f = 0; f < 3; ++f) {
-		const std::uint16_t b = static_cast<std::uint16_t>(f * 4);
+		const std::uint32_t b = static_cast<std::uint32_t>(f * 4);
 		indices.push_back(b + 0);
 		indices.push_back(b + 1);
 		indices.push_back(b + 2);

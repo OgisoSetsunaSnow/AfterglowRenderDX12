@@ -16,11 +16,12 @@ struct MeshVertex {
 };
 
 // 通用网格：顶点/索引数据 + GPU 缓冲。几何由工厂函数生成。
+// 索引 32 位（R32_UINT）：支持 >65535 顶点的大模型（Terrain.fbx 26 万顶点等）。
 class Mesh {
 public:
 	void create(D3D12Context& context,
 		const std::vector<MeshVertex>& vertices,
-		const std::vector<std::uint16_t>& indices);
+		const std::vector<std::uint32_t>& indices);
 
 	D3D12_VERTEX_BUFFER_VIEW vbView() const { return _vbView; }
 	D3D12_INDEX_BUFFER_VIEW ibView() const { return _ibView; }
@@ -29,16 +30,16 @@ public:
 
 	// ---- 几何工厂 ----
 	static std::vector<MeshVertex> makeCubeVertices();
-	static std::vector<std::uint16_t> makeCubeIndices();
+	static std::vector<std::uint32_t> makeCubeIndices();
 
 	static std::vector<MeshVertex> makeSphereVertices(int stacks, int slices);
-	static std::vector<std::uint16_t> makeSphereIndices(int stacks, int slices);
+	static std::vector<std::uint32_t> makeSphereIndices(int stacks, int slices);
 
 	static std::vector<MeshVertex> makePlaneVertices(float size);
-	static std::vector<std::uint16_t> makePlaneIndices();
+	static std::vector<std::uint32_t> makePlaneIndices();
 
 	static std::vector<MeshVertex> makePrismVertices(); // 三棱柱
-	static std::vector<std::uint16_t> makePrismIndices();
+	static std::vector<std::uint32_t> makePrismIndices();
 
 private:
 	Microsoft::WRL::ComPtr<ID3D12Resource> _vertexBuffer;

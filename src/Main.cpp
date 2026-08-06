@@ -15,6 +15,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 
@@ -114,6 +115,16 @@ int main() {
 			<< yvonneBody.width() << "x" << yvonneBody.height()
 			<< " / " << yvonneHair.width() << "x" << yvonneHair.height() << std::endl;
 
+		// Ankha（第三个角色）：albedo 纹理（参考项目 Ankha*.mati 的 albedoTex 引用）。
+		Texture ankhaBody, ankhaDress, ankhaEye, ankhaHair;
+		const char* ankTexDir = "../vsbuild/Assets/Characters/Ankha/Textures/";
+		ankhaBody.load(context, std::string(ankTexDir) + "BODY TEXTURE.png");        // mesh 1/2/3/5/6/8/10
+		ankhaDress.load(context, std::string(ankTexDir) + "DRESS TEXTURE.png");      // mesh 0
+		ankhaEye.load(context, std::string(ankTexDir) + "EYE TEXTURE.png");          // mesh 4/7
+		ankhaHair.load(context, std::string(ankTexDir) + "HAIR SKATER TEXTURE.png"); // mesh 9
+		std::cout << "[AfterglowRender DX12] loaded Ankha textures "
+			<< ankhaBody.width() << "x" << ankhaBody.height() << std::endl;
+
 		// 共享 SRV 堆：D3D12 同一时刻只能设置一个 CBV_SRV_UAV 堆，所有 RT 的 SRV 放一起。
 		// index 0=offscreen, 1=downSampled, 2=horizontalBlur, 3=combined, 4=depth(10d)。
 		Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> sharedSrvHeap;
@@ -134,12 +145,14 @@ int main() {
 
 		MeshRenderer meshRenderer(context, vs, ps,
 			{ &texture, &battleMageBody, &battleMageDecal, &skyTexture,
-			  &yvonneBody, &yvonneCloth1, &yvonneCloth2, &yvonneFace, &yvonneIris, &yvonneHair },
+			  &yvonneBody, &yvonneCloth1, &yvonneCloth2, &yvonneFace, &yvonneIris, &yvonneHair,
+			  &ankhaBody, &ankhaDress, &ankhaEye, &ankhaHair },
 			256, outlineVs, outlinePs,
 			DXGI_FORMAT_R16G16B16A16_FLOAT, sharedSrvHeap.Get(), 4, skyVs, skyPs); // HDR 离屏 + depth SRV(10d) + SkySphere
 
-		// 阶段 8：方向光（左上角照向场景）。
-		meshRenderer.setLight(glm::normalize(glm::vec3(0.4f, 1.0f, 0.3f)),
+		// 阶段 8：方向光（左上角照向场景）。sceneLightDir 供光轴（SkylightShaft）用。
+		const glm::vec3 sceneLightDir = glm::normalize(glm::vec3(0.4f, 1.0f, 0.3f));
+		meshRenderer.setLight(sceneLightDir,
 			glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(0.12f, 0.12f, 0.15f));
 
 		// 阶段 10：离屏 sceneColor + 后处理。
@@ -202,30 +215,33 @@ int main() {
 		std::cout << "[AfterglowRender DX12] loaded Yvonne.fbx: "
 			<< yvonneModel.meshes().size() << " mesh(es)" << std::endl;
 
+		// Ankha（第三个角色，参考项目 Assets/Characters/Ankha/Ankha.fbx，scale 0.02）。
+		Model ankhaModel;
+		ankhaModel.load(context, "../vsbuild/Assets/Characters/Ankha/Ankha.fbx");
+		std::cout << "[AfterglowRender DX12] loaded Ankha.fbx: "
+			<< ankhaModel.meshes().size() << " mesh(es)" << std::endl;
+
+		// 装饰模型：PaperAirplane（参考项目 Boids，scale 0.2）+ DebugBox（参考项目 GlitchedMosaics，位置 (4,4,1)）。
+		Model paperPlaneModel, debugBoxModel;
+		paperPlaneModel.load(context, "../vsbuild/Assets/Shared/Models/PaperAirplane.fbx");
+		debugBoxModel.load(context, "../vsbuild/Assets/Shared/Models/DebugBox.fbx");
+		std::cout << "[AfterglowRender DX12] loaded PaperAirplane/DebugBox: "
+			<< paperPlaneModel.meshes().size() << "/" << debugBoxModel.meshes().size() << " mesh(es)" << std::endl;
+
+		// Terrain.fbx：参考项目 disabled（用 TerrainData/TerrainMesh/WaterMesh compute shader 程序化生成地形）。
+		// 对齐参考项目：不加载 Terrain.fbx。compute 地形属后续大工程（需 compute pipeline）。
+
 		// ---- 场景物体（mesh + 位置 + 材质颜色） ----
+		// 已清理测试几何（棋盘纹理立方体/球/棱柱/远景模型），只保留天空盒 + 地面 + 角色 + 纸飞机。
 		std::vector<DrawItem> items = {
 			// SkySphere 天空盒（遗留 #1 修复）：SkySphere.fbx 半径 50000，scale 0.01 → 世界半径 500
 			// （参考项目 SkySphere scale 0.01）。SkySphere shader 使球心跟随相机（相机永远在球内）。
 			// 必须画在 items 最前（0 号），否则 disable-depth 球后画会覆盖所有物体。
 			{ &skySphereModel.meshes()[0], glm::scale(glm::mat4(1.0f), glm::vec3(0.01f)),
 				glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), 3, false, false, 0.0f, true },
-			{ &meshes[0], glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-				glm::vec4(1.0f, 0.35f, 0.35f, 1.0f) },   // 立方体（中）
-			{ &meshes[1], glm::translate(glm::mat4(1.0f), glm::vec3(-3.5f, 1.0f, 0.0f)),
-				glm::vec4(0.35f, 1.0f, 0.45f, 1.0f) },   // 球（左）
-			{ &meshes[3], glm::translate(glm::mat4(1.0f), glm::vec3(2.5f, 0.5f, 0.0f)),
-				glm::vec4(0.45f, 0.55f, 1.0f, 1.0f) },   // 三棱柱（中右）
-			{ &boxModel.meshes()[0], glm::translate(glm::mat4(1.0f), glm::vec3(4.5f, 1.0f, 0.0f)),
-				glm::vec4(0.9f, 0.5f, 0.2f, 1.0f) },     // Box.fbx（底部对齐地面）
+			// 地面。
 			{ &meshes[2], glm::mat4(1.0f),
-				glm::vec4(0.55f, 0.55f, 0.55f, 1.0f) },  // 地面
-			// 参考项目 shared models（远距离，验证雾效果 10d-1）
-			{ &sphereModel.meshes()[0], glm::translate(glm::mat4(1.0f), glm::vec3(8.0f, 1.0f, -8.0f)),
-				glm::vec4(0.3f, 0.7f, 0.9f, 1.0f) },    // 远景 Sphere（蓝）
-			{ &prismModel.meshes()[0], glm::translate(glm::mat4(1.0f), glm::vec3(-7.0f, 0.5f, -9.0f)),
-				glm::vec4(0.7f, 0.4f, 0.6f, 1.0f) },    // 远景 Prism（紫）
-		{ &planeModel.meshes()[0], glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 0.0f, -14.0f)),
-			glm::vec4(0.45f, 0.45f, 0.5f, 1.0f) },   // 远景 Plane（灰）
+				glm::vec4(0.55f, 0.55f, 0.55f, 1.0f) },
 		};
 
 		// BattleMage：放场景后方（相机看向 -Z 方向），正面绕 X 转 -90° 朝 +Z 面向相机。
@@ -274,6 +290,30 @@ int main() {
 				outlineOn, false, 5.0f, false, yvOutlineColor[i] }); // width 5 (thinner)
 		}
 
+		// Ankha（第三个角色，参考项目 scale 0.02, translation {0,6,0.5}）。
+		// mesh 材质映射：0 Dress, 1/2/3 Body, 4 Eye, 5/6 Body, 7 Eye, 8 Body, 9 Hair, 10 Body。
+		// 参考项目 Ankha 无 outline 材质 pass → 不描边。AnkhaFur.fbx（毛茸茸，instancing）本工程暂不支持。
+		const glm::mat4 ankhaBase = glm::rotate(
+			glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(4.0f, 0.0f, 5.0f)),
+				glm::vec3(0.02f)),
+			glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		static const UINT ankSrv[11] = { 11, 10, 10, 10, 12, 10, 10, 12, 10, 13, 10 };
+		for (std::size_t i = 0; i < ankhaModel.meshes().size(); ++i) {
+			const UINT srv = (i < 11) ? ankSrv[i] : 10;
+			items.push_back({ &ankhaModel.meshes()[i], ankhaBase,
+				glm::vec4(1.0f), srv, false, false, 0.0f });
+		}
+
+		// PaperAirplane（在天空飞，参考项目 Boids 是 compute 群集动画，本工程用 CPU 圆周轨迹近似）。
+		// DebugBox.fbx 移除：测试用的 1x1x1 棋盘盒子，无实际用途。
+		const std::size_t paperPlaneIndex = items.size();
+		if (!paperPlaneModel.meshes().empty()) {
+			items.push_back({ &paperPlaneModel.meshes()[0],
+				glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(6.0f, 3.0f, -4.0f)),
+					glm::vec3(0.2f)),
+				glm::vec4(1.0f, 0.9f, 0.5f, 1.0f), 0, false, false, 0.0f }); // 米黄
+		}
+
 		// 相机：F 键在轨道/自由之间切换。
 		enum class CameraMode { Orbit, Free };
 		CameraMode cameraMode = CameraMode::Free;
@@ -287,6 +327,10 @@ int main() {
 		double lastMouseX = 0.0, lastMouseY = 0.0;
 		window.getCursorPos(lastMouseX, lastMouseY);
 		bool fKeyPrev = false;
+
+		// 10d-2 调试：数字键切换后处理效果（1=色差 2=尘埃 3=暗角 4=全开 0=关）。
+		std::uint32_t postEffects = 0x7u;
+		bool fxKeyPrev[4] = { false, false, false, false }; // 1/2/3/0
 
 		const auto start = std::chrono::steady_clock::now();
 		auto lastFrame = std::chrono::steady_clock::now();
@@ -312,6 +356,30 @@ int main() {
 					<< (cameraMode == CameraMode::Orbit ? "orbit" : "free") << std::endl;
 			}
 			fKeyPrev = fKeyNow;
+
+			// 10d-2：数字键切换后处理效果（边沿触发）。
+			auto toggleFx = [&](int key, std::uint32_t bit, int idx, const char* name) {
+				const bool now = window.isKeyPressed(key);
+				if (now && !fxKeyPrev[idx]) {
+					postEffects ^= bit;
+					std::cout << "[AfterglowRender DX12] fx " << name << (postEffects & bit ? " ON" : " OFF")
+						<< " (0x" << std::hex << postEffects << std::dec << ")" << std::endl;
+				}
+				fxKeyPrev[idx] = now;
+			};
+			toggleFx(GLFW_KEY_1, 0x1u, 0, "chromatic aberration");
+			toggleFx(GLFW_KEY_2, 0x2u, 1, "dust");
+			toggleFx(GLFW_KEY_3, 0x4u, 2, "vignette");
+			// 0 = 全关，4 = 全开（直接赋值）。
+			const bool fxKey0 = window.isKeyPressed(GLFW_KEY_0);
+			if (fxKey0 && !fxKeyPrev[3]) {
+				postEffects = 0x0u;
+				std::cout << "[AfterglowRender DX12] fx all OFF (0x0)" << std::endl;
+			}
+			fxKeyPrev[3] = fxKey0;
+			if (window.isKeyPressed(GLFW_KEY_4)) {
+				postEffects = 0x7u; // 4 = 全开
+			}
 
 			// ---- 相机输入 ----
 			double mouseX = 0.0, mouseY = 0.0;
@@ -348,14 +416,20 @@ int main() {
 				view = freeCamera.viewMatrix();
 			}
 
-			// 物体动画：立方体旋转、球自转、棱柱静止、地面固定。
-			// SkySphere(items[0]) 固定原点不更新。
-			items[1].model = glm::rotate(
-				glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-				t * 0.8f, glm::vec3(0.4f, 1.0f, 0.2f));   // 立方体（中）
-			items[2].model = glm::rotate(
-				glm::translate(glm::mat4(1.0f), glm::vec3(-3.5f, 1.0f, 0.0f)),
-				t * 0.6f, glm::vec3(0.0f, 1.0f, 0.0f));   // 球（左）
+			// 物体动画：纸飞机（环形轨迹）更新；SkySphere/地面/角色固定。
+
+			// 纸飞机环形飞行（参考项目 Boids 是 compute 群集，本工程用 CPU 圆周轨迹近似）。
+			// 绕 Y 旋转使机头朝向运动方向。
+			if (paperPlaneIndex < items.size()) {
+				const float ang = t * 0.6f;
+				items[paperPlaneIndex].model = glm::rotate(
+					glm::scale(glm::translate(glm::mat4(1.0f),
+						glm::vec3(std::cos(ang) * 5.0f,
+							2.5f + std::sin(t * 0.5f),
+							std::sin(ang) * 5.0f - 3.0f)),
+						glm::vec3(0.2f)),
+					ang + glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+			}
 
 			const glm::mat4 proj = (cameraMode == CameraMode::Orbit)
 				? orbitCamera.projMatrix(static_cast<float>(context.width()) / static_cast<float>(context.height()))
@@ -399,9 +473,9 @@ int main() {
 			// 从 proj 提取 near/far（glm RH 透视）。
 			const float nearZ = proj[3][2] / (proj[2][2] - 1.0f);
 			const float farZ = proj[3][2] / (proj[2][2] + 1.0f);
-			postProcess.render(sharedSrvHeap.Get(), offscreen.srvHandle(),
-				combined.srvHandle(), meshRenderer.depthSrvHandle(),
-				context.currentRtv(), cameraPos, nearZ, farZ);
+		postProcess.render(sharedSrvHeap.Get(), offscreen.srvHandle(),
+			combined.srvHandle(), meshRenderer.depthSrvHandle(),
+			context.currentRtv(), cameraPos, nearZ, farZ, t, view, sceneLightDir, postEffects); // t=动画时间, view/lightDir 供光轴
 			context.transitionCurrentBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET,
 				D3D12_RESOURCE_STATE_PRESENT);
 

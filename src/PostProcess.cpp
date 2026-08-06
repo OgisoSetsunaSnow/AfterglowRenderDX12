@@ -128,7 +128,9 @@ void PostProcess::render(ID3D12DescriptorHeap* srvHeap,
 	D3D12_GPU_DESCRIPTOR_HANDLE bloomSrv,
 	D3D12_GPU_DESCRIPTOR_HANDLE depthSrv,
 	const D3D12_CPU_DESCRIPTOR_HANDLE& rtv,
-	const glm::vec3& cameraPos, float nearZ, float farZ) {
+	const glm::vec3& cameraPos, float nearZ, float farZ, float time,
+	const glm::mat4& view, const glm::vec3& lightDir,
+	std::uint32_t effects) {
 	auto* cl = _context.commandList();
 	const UINT w = _context.width();
 	const UINT h = _context.height();
@@ -146,23 +148,39 @@ void PostProcess::render(ID3D12DescriptorHeap* srvHeap,
 	cl->SetPipelineState(_pso.Get());
 	cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	// b0：相机/雾参数。
+	// b0：相机/雾/光轴参数。
 	struct PostParams {
 		glm::vec4 cameraPosition;
 		glm::vec4 fogColor;
+		glm::mat4 view;          // 光轴：方向光变换到相机空间
+		glm::vec4 dirLightDirection; // 世界空间方向光（光轴用）
 		float nearZ;
 		float farZ;
 		float fogDensity;
-		float pad;
+		float time;
+		std::uint32_t effects;   // 位标志：bit0=色差 bit1=尘埃 bit2=暗角
+		std::uint32_t pad;
+		float invScreenWidth;
+		float invScreenHeight;
+		float pad2;
+		float pad3;
 	};
 	PostParams* params = nullptr;
 	_paramCbv->Map(0, nullptr, reinterpret_cast<void**>(&params));
 	params->cameraPosition = glm::vec4(cameraPos, 1.0f);
 	params->fogColor = glm::vec4(0.35f, 0.4f, 0.5f, 1.0f); // 雾色（冷灰蓝）
+	params->view = view;
+	params->dirLightDirection = glm::vec4(glm::normalize(lightDir), 0.0f);
 	params->nearZ = nearZ;
 	params->farZ = farZ;
 	params->fogDensity = 0.08f;
-	params->pad = 0.0f;
+	params->time = time;
+	params->effects = effects;
+	params->pad = 0;
+	params->invScreenWidth = 1.0f / static_cast<float>(w);
+	params->invScreenHeight = 1.0f / static_cast<float>(h);
+	params->pad2 = 0.0f;
+	params->pad3 = 0.0f;
 	_paramCbv->Unmap(0, nullptr);
 	cl->SetGraphicsRootConstantBufferView(0, _paramCbv->GetGPUVirtualAddress());
 	cl->SetGraphicsRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());

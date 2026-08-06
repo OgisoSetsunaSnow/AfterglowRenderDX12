@@ -96,12 +96,12 @@ bool Model::load(D3D12Context& context, const std::string& filePath) {
 			vertices.push_back(v);
 		}
 
-		std::vector<std::uint16_t> indices;
+		std::vector<std::uint32_t> indices; // 32 位索引：支持 >65535 顶点（Terrain.fbx 26 万顶点）
 		indices.reserve(am->mNumFaces * 3);
 		for (unsigned f = 0; f < am->mNumFaces; ++f) {
 			const aiFace& face = am->mFaces[f];
 			for (unsigned j = 0; j < face.mNumIndices; ++j) {
-				indices.push_back(static_cast<std::uint16_t>(face.mIndices[j]));
+				indices.push_back(face.mIndices[j]);
 			}
 		}
 
