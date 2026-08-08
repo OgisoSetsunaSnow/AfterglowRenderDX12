@@ -327,7 +327,8 @@ UINT CharacterRenderer::writeMeshUniform(char* dst, const CharacterDrawItem& ite
 
 void CharacterRenderer::render(const glm::mat4& view, const glm::mat4& proj,
 	const std::vector<CharacterDrawItem>& items,
-	const D3D12_CPU_DESCRIPTOR_HANDLE& rtv, const D3D12_CPU_DESCRIPTOR_HANDLE& dsv) {
+	const D3D12_CPU_DESCRIPTOR_HANDLE& rtv, const D3D12_CPU_DESCRIPTOR_HANDLE& dsv,
+	UINT cbvOffset) {
 	if (items.empty()) {
 		return;
 	}
@@ -379,12 +380,12 @@ void CharacterRenderer::render(const glm::mat4& view, const glm::mat4& proj,
 	_globalUniformCbv->Unmap(0, nullptr);
 	cl->SetGraphicsRootConstantBufferView(1, _globalUniformCbv->GetGPUVirtualAddress());
 
-	// 写所有物体 MeshUniform。
+	// 写所有物体 MeshUniform（起始 slot = cbvOffset，支持同帧多次调用）。
 	MeshUniformCB* mapped = nullptr;
 	_meshUniformCbv->Map(0, nullptr, reinterpret_cast<void**>(&mapped));
 	const D3D12_GPU_VIRTUAL_ADDRESS cbvBase = _meshUniformCbv->GetGPUVirtualAddress();
 	for (std::size_t i = 0; i < items.size(); ++i) {
-		writeMeshUniform(reinterpret_cast<char*>(mapped), items[i], static_cast<UINT>(i), proj * view);
+		writeMeshUniform(reinterpret_cast<char*>(mapped), items[i], static_cast<UINT>(cbvOffset + i), proj * view);
 	}
 	_meshUniformCbv->Unmap(0, nullptr);
 
@@ -415,7 +416,7 @@ void CharacterRenderer::render(const glm::mat4& view, const glm::mat4& proj,
 		// 描边纹理组：默认沿用材质组；EndfieldOutline 采样 t3=stTex（布料用白 st 组）。
 		const UINT outlineGroup = (item.outlineTextureGroup != UINT_MAX)
 			? item.outlineTextureGroup : item.textureGroup;
-		drawMesh(item, static_cast<UINT>(i), _outlinePsos[outlineIdx].Get(), outlineGroup);
+		drawMesh(item, static_cast<UINT>(cbvOffset + i), _outlinePsos[outlineIdx].Get(), outlineGroup);
 	}
 
 	// Main pass。
@@ -425,6 +426,6 @@ void CharacterRenderer::render(const glm::mat4& view, const glm::mat4& proj,
 			continue;
 		}
 		const int matIdx = static_cast<int>(item.material);
-		drawMesh(item, static_cast<UINT>(i), _psos[matIdx].Get(), item.textureGroup);
+		drawMesh(item, static_cast<UINT>(cbvOffset + i), _psos[matIdx].Get(), item.textureGroup);
 	}
 }

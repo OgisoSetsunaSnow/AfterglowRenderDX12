@@ -36,6 +36,28 @@ float2 Hash2D(float2 xy, float seed) {
 	)) * 13127.643 + seed);
 }
 
+// ---- 参考项目 Random.hlsl：Boid/Grass 用（BitHash/UniformBitHash/Hash3D）----
+int BitHash(int x) {
+	x = (x ^ 61) ^ (x >> 16);
+	x = x + (x << 3);
+	x = x ^ (x >> 4);
+	x = x * 0x27d4eb2d;
+	x = x ^ (x >> 15);
+	return x;
+}
+
+float UniformBitHash(int x) {
+	return float(BitHash(x)) / float(0x7FFFFFFF);
+}
+
+float3 Hash3D(float3 xyz, float seed) {
+	return frac(sin(float3(
+		dot(xyz, float3(83.7247, 71.7823, 24.274)),
+		dot(xyz, float3(64.4634, 49.4349, 82.263)),
+		dot(xyz, float3(94.262, 20.9245, 34.8256))
+	)) * 52567.0925 + seed);
+}
+
 float Hash(float x, float y, float seed) {
 	return Hash(float2(x, y), seed);
 }

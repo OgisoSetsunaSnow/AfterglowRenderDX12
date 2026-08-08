@@ -26,6 +26,7 @@ enum class CharacterMaterial : int {
 	EndfieldEyeShadow,  // Yvonne EyeShadow（无纹理，UnlitVS，半透明）
 	EndfieldHairShadow, // Yvonne HairShadow（无纹理，HairShadow_VS，半透明）
 	DefaultLit,         // Ankha（albedo+normal）
+	AnkhaMask,          // Ankha 身体（debug 版：ShellFurMask_VS + DefaultLit_FS，sizeExpand/depthOffset mask）
 	Count
 };
 
@@ -83,8 +84,11 @@ public:
 	CharacterRenderer& operator=(const CharacterRenderer&) = delete;
 
 	// 每帧绘制所有角色（outline pass 先画 + main pass）。
+	// cbvOffset：MeshUniform CBV 起始 slot（0 默认）。同一帧多次调用时必须传不同偏移，
+	// 否则第二次调用覆盖 slot 0 → 第一次调用的 drawMesh(0) 读到错数据（曾致 BattleMage 串到 Ankha 位）。
 	void render(const glm::mat4& view, const glm::mat4& proj, const std::vector<CharacterDrawItem>& items,
-		const D3D12_CPU_DESCRIPTOR_HANDLE& rtv, const D3D12_CPU_DESCRIPTOR_HANDLE& dsv);
+		const D3D12_CPU_DESCRIPTOR_HANDLE& rtv, const D3D12_CPU_DESCRIPTOR_HANDLE& dsv,
+		UINT cbvOffset = 0);
 
 	void setLight(const glm::vec3& dir, const glm::vec3& color, float intensity);
 

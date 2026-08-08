@@ -5,6 +5,10 @@
 #include "CharacterRenderer.h"
 #include "FreeCamera.h"
 #include "FullScreenPass.h"
+#include "FractalNoise.h"
+#include "BoidsRenderer.h"
+#include "GrassRenderer.h"
+#include "FurRenderer.h"
 #include "Mesh.h"
 #include "MeshRenderer.h"
 #include "Model.h"
@@ -159,6 +163,53 @@ int main() {
 	const auto fractalInitCs = shader::compileFromFile(fractalInitFile, csOptions);
 	std::cout << "[AfterglowRender DX12] compiled " << fractalInitFile
 		<< " (cs " << fractalInitCs.size() << "B)" << std::endl;
+	// FractalNoise 完整数据流（照搬参考 FractalNoise.mat）：Worley + Normal（水面只用 Simplex）。
+	const std::string fractalWorleyFile = "Shaders/FractalWorleyNoiseInitializer_CS.hlsl";
+	const auto fractalWorleyCs = shader::compileFromFile(fractalWorleyFile, csOptions);
+	std::cout << "[AfterglowRender DX12] compiled " << fractalWorleyFile
+		<< " (cs " << fractalWorleyCs.size() << "B)" << std::endl;
+	const std::string fractalNoiseFile = "Shaders/FractalNoise_CS.hlsl";
+	const auto fractalNoiseCs = shader::compileFromFile(fractalNoiseFile, csOptions);
+	std::cout << "[AfterglowRender DX12] compiled " << fractalNoiseFile
+		<< " (cs " << fractalNoiseCs.size() << "B)" << std::endl;
+	// Boids（照搬参考 BoidInstancing.mat：attribute/instance init + 每帧 sim + instanced draw）。
+	const std::string boidAttrInitFile = "Shaders/Boid/BoidAttributeInitializer_CS.hlsl";
+	const std::string boidInstInitFile = "Shaders/Boid/BoidInstanceInitializer_CS.hlsl";
+	const std::string boidSimFile = "Shaders/Boid/BoidInstancing_CS.hlsl";
+	const std::string boidVsFile = "Shaders/Boid/BoidInstancing_VS.hlsl";
+	const auto boidAttrInitCs = shader::compileFromFile(boidAttrInitFile, csOptions);
+	const auto boidInstInitCs = shader::compileFromFile(boidInstInitFile, csOptions);
+	const auto boidSimCs = shader::compileFromFile(boidSimFile, csOptions);
+	const auto boidVs = shader::compileFromFile(boidVsFile, vsOptions);
+	const auto boidPs = shader::compileFromFile("Shaders/DefaultLit_FS.hlsl", psOptions); // 参考 BoidInstancing.mat fragmentShaderPath
+	std::cout << "[AfterglowRender DX12] compiled Boids: " << boidAttrInitFile << " ("
+		<< boidAttrInitCs.size() << "B) " << boidInstInitFile << " (" << boidInstInitCs.size()
+		<< "B) " << boidSimFile << " (" << boidSimCs.size() << "B) " << boidVsFile << " (vs "
+		<< boidVs.size() << "B)" << std::endl;
+	// Grass（照搬参考 GrassData.mat + GrassInstancing.mat：GrassData 纹理 + 每帧实例生成 + ExecuteIndirect）。
+	const std::string grassDataFile = "Shaders/Grass/GrassData_CS.hlsl";
+	const std::string grassInstFile = "Shaders/Grass/GrassInstancing_CS.hlsl";
+	const std::string grassVsFile = "Shaders/Grass/GrassInstancing_VS.hlsl";
+	const std::string grassFsFile = "Shaders/Grass/GrassInstancing_FS.hlsl";
+	const auto grassDataCs = shader::compileFromFile(grassDataFile, csOptions);
+	const auto grassInstCs = shader::compileFromFile(grassInstFile, csOptions);
+	const auto grassVs = shader::compileFromFile(grassVsFile, vsOptions);
+	const auto grassPs = shader::compileFromFile(grassFsFile, psOptions);
+	std::cout << "[AfterglowRender DX12] compiled Grass: " << grassDataFile << " ("
+		<< grassDataCs.size() << "B) " << grassInstFile << " (" << grassInstCs.size()
+		<< "B) " << grassVsFile << " (vs " << grassVs.size() << "B) " << grassFsFile
+		<< " (ps " << grassPs.size() << "B)" << std::endl;
+	// ShellFur（照搬参考 ShellFur.mat + AnkhaFur.mati：8 壳层实例化毛发生成）。
+	const std::string furVsFile = "Shaders/ShellFur/ShellFur_VS.hlsl";
+	const std::string furFsFile = "Shaders/ShellFur/ShellFur_FS.hlsl";
+	const auto furVs = shader::compileFromFile(furVsFile, vsOptions);
+	const auto furPs = shader::compileFromFile(furFsFile, psOptions);
+	std::cout << "[AfterglowRender DX12] compiled ShellFur: " << furVsFile << " (vs "
+		<< furVs.size() << "B) " << furFsFile << " (ps " << furPs.size() << "B)" << std::endl;
+	// ShellFurMask_VS（debug 版 Ankha.mat 的 mask 顶点着色器：Ankha 身体用）。
+	const auto shellFurMaskVs = shader::compileFromFile("Shaders/ShellFur/ShellFurMask_VS.hlsl", vsOptions);
+	std::cout << "[AfterglowRender DX12] compiled Shaders/ShellFur/ShellFurMask_VS.hlsl (vs "
+		<< shellFurMaskVs.size() << "B)" << std::endl;
 
 	// 角色材质 shader（照搬参考项目 DefaultLit_VS/Endfield*_VS + 各材质 FS + 描边）。
 	// 材质专用 VS：EndfieldBody_VS（normalized position → color.xyz）、EndfieldIris_VS（color.x=tangent.x）、
@@ -185,6 +236,7 @@ int main() {
 		unlitVs,            // EndfieldEyeShadow → Unlit_VS
 		endfieldHairShadowVs, // EndfieldHairShadow → EndfieldHairShadow_VS
 		characterVs,        // DefaultLit → DefaultLit_VS
+		shellFurMaskVs,     // AnkhaMask → ShellFurMask_VS（debug 版 Ankha 身体 mask）
 	};
 	const std::vector<std::vector<std::uint8_t>> characterFsList = {
 		shader::compileFromFile("Shaders/ArcToon_FS.hlsl", psOptions),           // 0 ArcToon
@@ -198,6 +250,7 @@ int main() {
 		shader::compileFromFile("Shaders/EndfieldEyeShadow_FS.hlsl", psOptions), // 8 EndfieldEyeShadow
 		shader::compileFromFile("Shaders/EndfieldHairShadow_FS.hlsl", psOptions),// 9 EndfieldHairShadow
 		shader::compileFromFile("Shaders/DefaultLit_FS.hlsl", psOptions),        // 10 DefaultLit
+		shader::compileFromFile("Shaders/DefaultLit_FS.hlsl", psOptions),        // 11 AnkhaMask（同 DefaultLit_FS）
 	};
 	// 每材质 PSO 配置（参考项目 .mat：cullMode 0=None 2=Back；Transparency 域 blend + 不写深度）。
 	const std::vector<CharacterMaterialDesc> characterMaterialDescs = {
@@ -212,6 +265,7 @@ int main() {
 		{ D3D12_CULL_MODE_BACK, false, true },  // EndfieldEyeShadow（Transparency, depthWrite false）
 		{ D3D12_CULL_MODE_BACK, false, true },  // EndfieldHairShadow（Transparency, depthWrite false）
 		{ D3D12_CULL_MODE_BACK, true, false },  // DefaultLit（cullMode 2）
+		{ D3D12_CULL_MODE_NONE, true, false },  // AnkhaMask（debug Ankha.mat cullMode 0 双面）
 	};
 	const std::vector<std::vector<std::uint8_t>> outlineVsList = {
 		shader::compileFromFile("Shaders/ArcOutline_VS.hlsl", vsOptions),
@@ -240,6 +294,14 @@ int main() {
 		std::cout << "[AfterglowRender DX12] loaded BattleMage decal texture "
 			<< battleMageDecal.width() << "x" << battleMageDecal.height() << std::endl;
 
+		// Box 用 ArcToon 武器材质（参考 BattleMageWeapon.mati，W00 系列纹理）。
+		Texture boxAlbedo, boxSss, boxIlm;
+		boxAlbedo.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_W00_base.png");
+		boxSss.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_W00_Sss.png");
+		boxIlm.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Base/19A_Body_W00_ilm.png");
+		std::cout << "[AfterglowRender DX12] loaded Box weapon textures "
+			<< boxAlbedo.width() << "x" << boxAlbedo.height() << std::endl;
+
 		// SkySphere 天空贴图（参考项目 Shared/Textures/DefaultSky.png）。
 		Texture skyTexture;
 		skyTexture.load(context, "../vsbuild/Assets/Shared/Textures/DefaultSky.png");
@@ -261,6 +323,9 @@ int main() {
 		Texture placeholderBlack, placeholderWhite;
 		placeholderBlack.load(context, "Textures/black.png", DXGI_FORMAT_R8G8B8A8_UNORM);
 		placeholderWhite.load(context, "Textures/white.png", DXGI_FORMAT_R8G8B8A8_UNORM);
+		// Standard 材质默认法线（参考项目 Shared/Textures/DefaultNormal.png，4x4 中性法线）。
+		Texture defaultNormalTex;
+		defaultNormalTex.load(context, "Textures/DefaultNormal.png", DXGI_FORMAT_R8G8B8A8_UNORM);
 
 		// Yvonne（第二个角色）：albedo 纹理（参考项目 Yvonne*.mati 的 albedoTex 引用）。
 		Texture yvonneBody, yvonneCloth1, yvonneCloth2, yvonneFace, yvonneIris, yvonneHair;
@@ -818,6 +883,39 @@ int main() {
 		waterRenderer.initializeFractalNoise();
 		std::cout << "[AfterglowRender DX12] created WaterRenderer (fractal simplex noise init done)" << std::endl;
 
+		// FractalNoise 完整数据流（Simplex + Worley + Normal），供未来 Grass/ShellFur 采样。
+		FractalNoise fractalNoise(context, fractalInitCs, fractalWorleyCs, fractalNoiseCs);
+		fractalNoise.initialize();
+		std::cout << "[AfterglowRender DX12] created FractalNoise (simplex/worley/normal init done)" << std::endl;
+
+		// Grass（照搬参考 GrassData.mat + GrassInstancing.mat）。
+		// grassAlbedo = MossyGrass BC（terrain 同款）；FractalNormal 来自 FractalNoise；数据纹理来自 terrain。
+		Texture grassAlbedoTex;
+		grassAlbedoTex.load(context,
+			"../../AfterglowRender_v0.1_x64_release/Assets/Shared/Textures/Terrain/MossyGrass/T_MossyGrass_01_BC.PNG");
+		GrassRenderer grassRenderer(context,
+			grassDataCs, grassInstCs, grassVs, grassPs,
+			terrainRenderer.heightResource(), terrainRenderer.normalResource(),
+			terrainRenderer.surfaceResource(), terrainRenderer.meteorographResource(),
+			grassAlbedoTex, fractalNoise.normalResource(), defaultSkyTex.resource());
+		grassRenderer.initialize();
+		std::cout << "[AfterglowRender DX12] created GrassRenderer (grass data init done)" << std::endl;
+
+		// Boids（照搬参考 BoidInstancing.mat：attribute/instance init + 每帧 O(N²) sim + instanced draw）。
+		// 替换纸飞机 CPU 环形轨迹为 GPU 群集模拟。纸飞机网格 + 地形高度（回避）+ 白/normal/ambient。
+		BoidsRenderer boidsRenderer(context,
+			boidAttrInitCs, boidInstInitCs, boidSimCs, boidVs, boidPs,
+			terrainRenderer.heightResource(),
+			placeholderWhite.resource(), defaultNormalTex.resource(), defaultSkyTex.resource());
+		boidsRenderer.initialize();
+		std::cout << "[AfterglowRender DX12] created BoidsRenderer (attribute/instance init done)" << std::endl;
+
+		// ShellFur（AnkhaFur）：8 壳层实例化毛。albedo/normal = Ankha 身体纹理，FractalNoise 供毛噪声。
+		FurRenderer furRenderer(context, furVs, furPs,
+			ankhaBody.resource(), ankhaBodyN.resource(),
+			fractalNoise.worleyResource(), fractalNoise.normalResource());
+		std::cout << "[AfterglowRender DX12] created FurRenderer (ShellFur, 8 shells)" << std::endl;
+
 		FullScreenPass downSamplingPass(context, downSh.vs, downSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
 		FullScreenPass horizontalBlurPass(context, horzSh.vs, horzSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
 		FullScreenPass verticalBlurPass(context, vertSh.vs, vertSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
@@ -875,6 +973,18 @@ int main() {
 		std::cout << "[AfterglowRender DX12] loaded PaperAirplane/DebugBox: "
 			<< paperPlaneModel.meshes().size() << "/" << debugBoxModel.meshes().size() << " mesh(es)" << std::endl;
 
+		// Grass 实例化网格（参考项目 InstancingGrass.fbx）。
+		Model grassMeshModel;
+		grassMeshModel.load(context, "../vsbuild/Assets/Shared/Models/InstancingGrass.fbx");
+		std::cout << "[AfterglowRender DX12] loaded InstancingGrass.fbx: "
+			<< grassMeshModel.meshes().size() << " mesh(es)" << std::endl;
+
+		// AnkhaFur（参考项目 ShellFur 实例化毛：AnkhaFur.fbx + AnkhaFur.mati parent=ShellFur）。
+		Model ankhaFurModel;
+		ankhaFurModel.load(context, "../vsbuild/Assets/Characters/Ankha/AnkhaFur.fbx");
+		std::cout << "[AfterglowRender DX12] loaded AnkhaFur.fbx: "
+			<< ankhaFurModel.meshes().size() << " mesh(es)" << std::endl;
+
 		// Terrain.fbx：参考项目 disabled（用 TerrainData/TerrainMesh/WaterMesh compute shader 程序化生成地形）。
 		// 对齐参考项目：不加载 Terrain.fbx。compute 地形属后续大工程（需 compute pipeline）。
 
@@ -929,9 +1039,13 @@ int main() {
 		{ &ankhaDress, &ankhaDressN, &placeholderBlack, &placeholderBlack, &placeholderBlack },
 		// 14 AnkhaEye：albedo（无 normalTex）
 		{ &ankhaEye, &placeholderBlack, &placeholderBlack, &placeholderBlack, &placeholderBlack },
-		// 15 AnkhaHair：albedo+normal
-		{ &ankhaHair, &ankhaHairN, &placeholderBlack, &placeholderBlack, &placeholderBlack },
-	};
+	// 15 AnkhaHair：albedo+normal
+	{ &ankhaHair, &ankhaHairN, &placeholderBlack, &placeholderBlack, &placeholderBlack },
+	// 16 Ball（Standard/BallPBR）：albedo 白 + DefaultNormal 中性法线
+	{ &placeholderWhite, &defaultNormalTex, &placeholderBlack, &placeholderBlack, &placeholderBlack },
+	// 17 Box（ArcToon 武器材质 BattleMageWeapon.mati）：W00 albedo+sss+ilm
+	{ &boxAlbedo, &boxSss, &boxIlm, &placeholderBlack, &placeholderBlack },
+};
 	std::vector<Texture*> materialTextures;
 	for (const auto& g : materialGroups) {
 		materialTextures.insert(materialTextures.end(), g.begin(), g.end());
@@ -1044,7 +1158,8 @@ int main() {
 		CharacterDrawItem item;
 		item.mesh = &ankhaModel.meshes()[i];
 		item.model = ankhaBase;
-		item.material = CharacterMaterial::DefaultLit;
+		// debug 版 Ankha.mat：身体材质用 ShellFurMask_VS（mask 外扩 + 深度偏移），其余角色保持 release。
+		item.material = CharacterMaterial::AnkhaMask;
 		item.textureGroup = (i < 12) ? ankGroup[i] : 12;
 		// 从 fbx mesh name 推断材质（Dress/Body/Eye/Hair），参考 Ankha*.mati 命名。
 		UINT cfgIdx = 0; // 默认 Body
@@ -1056,8 +1171,56 @@ int main() {
 		}
 		const AnkMeshCfg& c = ankCfg[cfgIdx];
 		item.params.materialParams2 = c.params2;
+		// materialParams3：x=subsurfaceOpacity(1.0) y=irisDepth(0) z=sizeExpand(0.16) w=depthOffset(0.0002)
+		// —— 对齐 debug 版 Ankha.mat 的 sizeExpand/depthOffset 标量。
+		item.params.materialParams3 = glm::vec4(1.0f, 0.0f, 0.16f, 0.0002f);
 		item.outline = false;
 		charItems.push_back(item);
+	}
+
+	// Ball（参考项目 Sphere.fbx + BallPBR/Standard 材质，独立 entity）。
+	// 参考 z-up translation {4,0,2} scale 1 → y-up (4,2,0)（rotate -90X 同角色）。
+	// BallPBR.mati：metallic 0.5 / specular 0.5 / roughness 0.4 / anisotropy -0.5 / subsurfaceOpacity 1.0。
+	if (!sphereModel.meshes().empty()) {
+		CharacterDrawItem ballItem;
+		ballItem.mesh = &sphereModel.meshes()[0];
+		ballItem.model = glm::translate(glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+			glm::vec3(4.0f, 2.0f, 0.0f));
+		ballItem.material = CharacterMaterial::DefaultLit;
+		ballItem.textureGroup = 16; // albedo 白 + DefaultNormal
+		ballItem.params.materialParams2 = glm::vec4(0.5f, 0.5f, 0.4f, -0.5f);
+		ballItem.params.materialParams3 = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f); // subsurfaceOpacity 1.0
+		ballItem.outline = false;
+		charItems.push_back(ballItem);
+	}
+
+	// Box/BoxB（参考项目 Box.fbx，BattleMage 子物体，ArcToon 武器材质）。
+	// 参考 z-up：Box 局部 scale(40,20,20) translation(80,-20,50) euler(0,15,45)；
+	// 世界 = battleMageBase * BoxLocal(z-up 局部)。BoxB = Box 子物体 T(0,-40,0)（默认 Standard）。
+	if (!boxModel.meshes().empty()) {
+		CharacterDrawItem boxItem;
+		boxItem.mesh = &boxModel.meshes()[0];
+		const glm::mat4 boxLocal = glm::translate(glm::mat4(1.0f), glm::vec3(80.0f, -20.0f, 50.0f))
+			* glm::rotate(glm::mat4(1.0f), glm::radians(15.0f), glm::vec3(0.0f, 0.0f, 1.0f))
+			* glm::rotate(glm::mat4(1.0f), glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f))
+			* glm::scale(glm::mat4(1.0f), glm::vec3(40.0f, 20.0f, 20.0f));
+		boxItem.model = battleMageBase * boxLocal;
+		boxItem.material = CharacterMaterial::ArcToon;
+		boxItem.textureGroup = 17; // W00 武器材质（BattleMageWeapon.mati）
+		boxItem.outline = false;
+		charItems.push_back(boxItem);
+
+		if (boxModel.meshes().size() > 1 || true) {
+			CharacterDrawItem boxBItem;
+			boxBItem.mesh = &boxModel.meshes()[0];
+			boxBItem.model = boxItem.model * glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -40.0f, 0.0f));
+			boxBItem.material = CharacterMaterial::DefaultLit; // 参考 BoxB 无材质 → 默认 Standard
+			boxBItem.textureGroup = 16; // albedo 白 + DefaultNormal
+			boxBItem.params.materialParams2 = glm::vec4(0.5f, 0.5f, 0.5f, 0.0f);
+			boxBItem.params.materialParams3 = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+			boxBItem.outline = false;
+			charItems.push_back(boxBItem);
+		}
 	}
 
 		// 角色世界位置核对（base[3] = 模型原点世界平移，与参考项目 z-up 转 y-up 后一致）。
@@ -1068,15 +1231,8 @@ int main() {
 		std::cerr << "[scene] Ankha world pos: " << ankhaBase[3].x << ", "
 			<< ankhaBase[3].y << ", " << ankhaBase[3].z << std::endl;
 
-		// PaperAirplane（在天空飞，参考项目 Boids 是 compute 群集动画，本工程用 CPU 圆周轨迹近似）。
+		// PaperAirplane：改由 BoidsRenderer（compute 群集）渲染，见渲染循环 boidsRenderer.render()。
 		// DebugBox.fbx 移除：测试用的 1x1x1 棋盘盒子，无实际用途。
-		const std::size_t paperPlaneIndex = items.size();
-		if (!paperPlaneModel.meshes().empty()) {
-			items.push_back({ &paperPlaneModel.meshes()[0],
-				glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(6.0f, 3.0f, -4.0f)),
-					glm::vec3(0.2f)),
-				glm::vec4(1.0f, 0.9f, 0.5f, 1.0f), 0, false, false, 0.0f }); // 米黄
-		}
 
 		// 相机：F 键在轨道/自由之间切换。默认轨道（对齐参考 MainCamera + SimpleController）。
 		enum class CameraMode { Orbit, Free };
@@ -1185,20 +1341,7 @@ int main() {
 				view = freeCamera.viewMatrix();
 			}
 
-			// 物体动画：纸飞机（环形轨迹）更新；SkySphere/地面/角色固定。
-
-			// 纸飞机环形飞行（参考项目 Boids 是 compute 群集，本工程用 CPU 圆周轨迹近似）。
-			// 绕 Y 旋转使机头朝向运动方向。
-			if (paperPlaneIndex < items.size()) {
-				const float ang = t * 0.6f;
-				items[paperPlaneIndex].model = glm::rotate(
-					glm::scale(glm::translate(glm::mat4(1.0f),
-						glm::vec3(std::cos(ang) * 5.0f,
-							2.5f + std::sin(t * 0.5f),
-							std::sin(ang) * 5.0f - 3.0f)),
-						glm::vec3(0.2f)),
-					ang + glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-			}
+			// 物体动画：纸飞机已由 Boids compute 群集模拟（见下方 boidsRenderer.render）；SkySphere/地面/角色固定。
 
 			const glm::mat4 proj = (cameraMode == CameraMode::Orbit)
 				? orbitCamera.projMatrix(static_cast<float>(context.width()) / static_cast<float>(context.height()))
@@ -1275,6 +1418,29 @@ int main() {
 			// 角色（CharacterRenderer）：outline 先画 + main pass，用同一离屏 RT + 深度。
 			characterRenderer.render(view, proj, charItems, terrainRtv, meshRenderer.dsvHandle());
 
+			// Boids（照搬参考 BoidInstancing.mat）：每帧 sim + 实例化绘制纸飞机群集。
+			// depth 仍为 DEPTH_WRITE（水 pass 前），Boids 写深度被地形/物体遮挡。
+			if (!paperPlaneModel.meshes().empty()) {
+				boidsRenderer.render(view, proj, cameraPos, t, dt,
+					paperPlaneModel.meshes()[0], terrainRtv, meshRenderer.dsvHandle());
+			}
+
+			// Grass（照搬参考 GrassInstancing.mat）：每帧实例生成 + ExecuteIndirect 间接绘制。
+			// 相机前向必须从 view 矩阵第三行提取（GLM view[2] 是第三列，仅 +Z 朝向时 ≈ 前向，
+			// 绕 X 旋转后（看 ±X）会偏 → 草网格被放到身后被剔除）。
+			if (!grassMeshModel.meshes().empty()) {
+				const glm::vec3 cameraFwdGrass = glm::vec3(-view[0][2], -view[1][2], -view[2][2]);
+				grassRenderer.render(view, proj, cameraPos, cameraFwdGrass, t, dt,
+					grassMeshModel.meshes()[0], terrainRtv, meshRenderer.dsvHandle());
+			}
+
+			// AnkhaFur（ShellFur 8 壳层毛）：全部角色之后绘制（fur 覆盖衣服——几何上限，未拆衣服）。
+			if (!ankhaFurModel.meshes().empty()) {
+				furRenderer.render(view, proj, ankhaBase, cameraPos,
+					sceneLightDir, glm::vec4(dirLightColor, dirLightIntensity),
+					ankhaFurModel.meshes()[0], terrainRtv, meshRenderer.dsvHandle());
+			}
+
 			// 水面（照搬参考 WaterMesh.mat）：渲染到同一离屏 RT。
 			// 折射需要"当前场景色"→ 先把 offscreen 拷贝到 waterSceneCopy（offscreen RENDER_TARGET→COPY_SOURCE）。
 			offscreen.transitionColor(D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -1282,10 +1448,11 @@ int main() {
 			offscreen.transitionColor(D3D12_RESOURCE_STATE_RENDER_TARGET); // 水 pass 写回离屏
 			// 深度转 DEPTH_READ：水 pass 只读深度测试（被地形遮挡）+ 采样 depth（折射淡出）。
 			meshRenderer.transitionDepthTo(D3D12_RESOURCE_STATE_DEPTH_READ);
-			// near/far（glm RH 透视），同后处理段。
-			const float waterNearZ = proj[3][2] / (proj[2][2] - 1.0f);
-			const float waterFarZ = proj[3][2] / (proj[2][2] + 1.0f);
-			const glm::vec3 cameraFwd = -glm::vec3(view[2]); // 相机 view 方向（cameraVector，参考 globalViewDirection）
+		// near/far（glm RH 透视），同后处理段。
+		const float waterNearZ = proj[3][2] / (proj[2][2] - 1.0f);
+		const float waterFarZ = proj[3][2] / (proj[2][2] + 1.0f);
+		// 相机 view 方向（同 Grass：第三行取反；-view[2] 第三列在 ±X 朝向时不是前向）。
+		const glm::vec3 cameraFwd = glm::vec3(-view[0][2], -view[1][2], -view[2][2]);
 			waterRenderer.render(terrainRtv, meshRenderer.dsvHandle(),
 				proj * view, terrainModel, cameraPos, cameraFwd,
 				sceneLightDir, glm::vec4(dirLightColor, dirLightIntensity),

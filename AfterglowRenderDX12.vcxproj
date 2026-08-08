@@ -99,6 +99,10 @@
     <ClCompile Include="src\FullScreenPass.cpp" />
     <ClCompile Include="src\ComputePass.cpp" />
     <ClCompile Include="src\TerrainRenderer.cpp" />
+    <ClCompile Include="src\FractalNoise.cpp" />
+    <ClCompile Include="src\BoidsRenderer.cpp" />
+    <ClCompile Include="src\GrassRenderer.cpp" />
+    <ClCompile Include="src\FurRenderer.cpp" />
     <ClCompile Include="src\WaterRenderer.cpp" />
     <ClCompile Include="src\CharacterRenderer.cpp" />
     <ClCompile Include="src\ACES.cpp" />
@@ -117,6 +121,10 @@
     <ClInclude Include="src\OffscreenRT.h" />
     <ClInclude Include="src\PostProcess.h" />
     <ClInclude Include="src\ComputePass.h" />
+    <ClInclude Include="src\FractalNoise.h" />
+    <ClInclude Include="src\BoidsRenderer.h" />
+    <ClInclude Include="src\GrassRenderer.h" />
+    <ClInclude Include="src\FurRenderer.h" />
     <ClInclude Include="src\WaterRenderer.h" />
     <ClInclude Include="src\CharacterRenderer.h" />
   </ItemGroup>

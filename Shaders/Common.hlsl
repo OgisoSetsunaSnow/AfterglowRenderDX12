@@ -121,4 +121,21 @@ float3x3 Float4x3ToFloat3x3(float4x3 mat) {
 	return float3x3(mat[0].xyz, mat[1].xyz, mat[2].xyz);
 }
 
+// 照搬参考项目 Common.hlsl（Boid/Grass instancing 用）：
+// 刚体变换求逆（rotation 转置 + translation 平移回）。
+float4x4 InverseRigidTransform(float4x4 m) {
+	float3x3 rotation = (float3x3)m;
+	float3 translation = m[3].xyz;
+
+	float3x3 invRotation = transpose(rotation);
+	float3 invTranslation = -mul(invRotation, translation);
+
+	return float4x4(
+		float4(invRotation[0], 0.0f),
+		float4(invRotation[1], 0.0f),
+		float4(invRotation[2], 0.0f),
+		float4(invTranslation, 1.0f)
+	);
+}
+
 #endif
