@@ -2,6 +2,7 @@
 
 #include <d3dx12.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
@@ -11,6 +12,16 @@
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
+
+// 为法线生成一个正交切线（程序化几何无真实 tangent，取垂直于 normal 的固定向量）。
+// 参考项目 StandardVSOutput 需要 worldTangent；程序化几何不上法线贴图，正交即可。
+glm::vec3 tangentForNormal(const glm::vec3& n) {
+	glm::vec3 t = glm::cross(n, glm::vec3(0.0f, 1.0f, 0.0f));
+	if (glm::length(t) < 1e-6f) {
+		t = glm::cross(n, glm::vec3(1.0f, 0.0f, 0.0f));
+	}
+	return glm::normalize(t);
+}
 
 } // namespace
 
@@ -87,6 +98,18 @@ void Mesh::create(D3D12Context& context,
 	_ibView.SizeInBytes = static_cast<UINT>(ibSize);
 	_ibView.Format = DXGI_FORMAT_R32_UINT; // 32 位索引，支持 >65535 顶点
 	_indexCount = static_cast<std::uint32_t>(indices.size());
+
+	// 模型空间 AABB（EndfieldBody_VS 等参考项目 MeshUniform 需要）。
+	_aabbMin = glm::vec3(1e9f);
+	_aabbMax = glm::vec3(-1e9f);
+	for (const auto& v : vertices) {
+		_aabbMin = glm::min(_aabbMin, v.pos);
+		_aabbMax = glm::max(_aabbMax, v.pos);
+	}
+	if (_aabbMax.x < _aabbMin.x) { // 空几何防御
+		_aabbMin = glm::vec3(0.0f);
+		_aabbMax = glm::vec3(0.0f);
+	}
 }
 
 // ---- 几何工厂 ----
@@ -123,6 +146,7 @@ std::vector<MeshVertex> Mesh::makeCubeVertices() {
 			vertex.uv = glm::vec2(uvs[v][0], uvs[v][1]);
 			vertex.normal = faceNormals[f];
 			vertex.color = white;
+			vertex.tangent = tangentForNormal(faceNormals[f]);
 			verts.push_back(vertex);
 		}
 	}
@@ -157,6 +181,7 @@ std::vector<MeshVertex> Mesh::makeSphereVertices(int stacks, int slices) {
 				static_cast<float>(s) / static_cast<float>(stacks));
 			v.normal = v.pos; // 单位球：法线 = 顶点位置
 			v.color = glm::vec4(1.0f);
+			v.tangent = tangentForNormal(v.normal);
 			verts.push_back(v);
 		}
 	}
@@ -202,6 +227,7 @@ std::vector<MeshVertex> Mesh::makePlaneVertices(float size) {
 		v.uv = glm::vec2(uvs[i][0], uvs[i][1]);
 		v.normal = glm::vec3(0.0f, 1.0f, 0.0f); // 平面朝 +Y
 		v.color = glm::vec4(1.0f);
+		v.tangent = tangentForNormal(v.normal);
 		verts.push_back(v);
 	}
 	return verts;
@@ -209,6 +235,49 @@ std::vector<MeshVertex> Mesh::makePlaneVertices(float size) {
 
 std::vector<std::uint32_t> Mesh::makePlaneIndices() {
 	return { 0, 1, 2, 0, 2, 3 };
+}
+
+std::vector<MeshVertex> Mesh::makeTerrainVertices(std::uint32_t sideElements, float interval) {
+	// GridVertex(vertexID, sideVertexCount, interval): grid centered at origin.
+	std::vector<MeshVertex> verts;
+	verts.reserve(static_cast<std::size_t>(sideElements) * sideElements);
+	const float halfSide = static_cast<float>(sideElements) * 0.5f;
+	for (std::uint32_t id = 0; id < sideElements * sideElements; ++id) {
+		const std::uint32_t ix = id / sideElements;
+		const std::uint32_t iy = id % sideElements;
+		const float x = interval * (static_cast<float>(ix) - halfSide);
+		const float y = interval * (static_cast<float>(iy) - halfSide);
+		MeshVertex v;
+		v.pos = glm::vec3(x, y, 0.0f); // 高度由 VS 采样高度纹理设置
+		v.uv = glm::vec2((static_cast<float>(ix) + 0.5f) / sideElements,
+			(static_cast<float>(iy) + 0.5f) / sideElements);
+		v.normal = glm::vec3(0.0f, 0.0f, 1.0f); // 地形高度轴为 z
+		v.color = glm::vec4(1.0f);
+		v.tangent = tangentForNormal(v.normal);
+		verts.push_back(v);
+	}
+	return verts;
+}
+
+std::vector<std::uint32_t> Mesh::makeTerrainIndices(std::uint32_t sideElements) {
+	// GridIndexPack(sideVertexCount) unpacked into a plain uint32 index array.
+	const std::uint32_t sideCells = sideElements - 1;
+	const std::uint32_t indexCount = sideCells * sideCells * 6;
+	std::vector<std::uint32_t> indices;
+	indices.reserve(indexCount);
+	for (std::uint32_t i = 0; i < indexCount; ++i) {
+		const std::uint32_t idx = std::min(i, indexCount);
+		const std::uint32_t triangleIndex = idx / 3;
+		const std::uint32_t triangleLineCount = triangleIndex / (2 * sideElements - 2);
+		const std::uint32_t faceIndex = idx % 3;
+		const std::uint32_t parity = triangleIndex & 1;
+		const std::uint32_t offset =
+			(faceIndex == 0) * (sideElements + parity) +
+			(faceIndex == 1) * 1u +
+			(faceIndex == 2) * (parity * sideElements);
+		indices.push_back(triangleIndex / 2 + triangleLineCount + offset);
+	}
+	return indices;
 }
 
 std::vector<MeshVertex> Mesh::makePrismVertices() {
@@ -242,6 +311,7 @@ std::vector<MeshVertex> Mesh::makePrismVertices() {
 			v.uv = faceUV[i];
 			v.normal = n;
 			v.color = white;
+			v.tangent = tangentForNormal(n);
 			verts.push_back(v);
 		}
 	};

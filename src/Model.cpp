@@ -17,6 +17,7 @@ bool Model::load(D3D12Context& context, const std::string& filePath) {
 		aiProcess_FlipUVs |
 		aiProcess_GenNormals |
 		aiProcess_GenUVCoords |
+		aiProcess_CalcTangentSpace | // 参考项目 BattleMage addImportFlags(GenerateTangent)
 		aiProcess_OptimizeMeshes |
 		aiProcess_JoinIdenticalVertices);
 	if (!scene || !scene->mRootNode || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE)) {
@@ -87,13 +88,29 @@ bool Model::load(D3D12Context& context, const std::string& filePath) {
 			} else {
 				v.uv = glm::vec2(0.0f, 0.0f);
 			}
-			if (am->HasNormals()) { // aiProcess_GenNormals 已保证存在
-				v.normal = glm::vec3(am->mNormals[i].x, am->mNormals[i].y, am->mNormals[i].z);
-			} else {
-				v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+		if (am->HasNormals()) { // aiProcess_GenNormals 已保证存在
+			v.normal = glm::vec3(am->mNormals[i].x, am->mNormals[i].y, am->mNormals[i].z);
+		} else {
+			v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+		}
+		// 切线（参考项目 GenerateTangent；assimp CalcTangentSpace 已生成）。
+		if (am->HasTangentsAndBitangents()) {
+			v.tangent = glm::vec3(am->mTangents[i].x, am->mTangents[i].y, am->mTangents[i].z);
+		} else {
+			glm::vec3 t = glm::cross(v.normal, glm::vec3(0.0f, 1.0f, 0.0f));
+			if (glm::length(t) < 1e-6f) {
+				t = glm::cross(v.normal, glm::vec3(1.0f, 0.0f, 0.0f));
 			}
+			v.tangent = glm::normalize(t);
+		}
+		// 顶点色（参考项目 ArcOutline_VS 用 color.b/a 做双因子外扩；EndfieldBody 用 color.x 翻转 bitangent）。
+		if (am->HasVertexColors(0)) {
+			const aiColor4D& c = am->mColors[0][i];
+			v.color = glm::vec4(c.r, c.g, c.b, c.a);
+		} else {
 			v.color = glm::vec4(1.0f);
-			vertices.push_back(v);
+		}
+		vertices.push_back(v);
 		}
 
 		std::vector<std::uint32_t> indices; // 32 位索引：支持 >65535 顶点（Terrain.fbx 26 万顶点）

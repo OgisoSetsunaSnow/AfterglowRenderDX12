@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <iostream>
 #include <stdexcept>
 
@@ -117,7 +118,7 @@ void MeshRenderer::createPipelineState(const std::vector<std::uint8_t>& vs, cons
 	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 	psoDesc.SampleDesc.Count = 1;
 
-	std::array<D3D12_INPUT_ELEMENT_DESC, 4> inputLayout = { {
+	std::array<D3D12_INPUT_ELEMENT_DESC, 5> inputLayout = { {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12,
@@ -125,6 +126,8 @@ void MeshRenderer::createPipelineState(const std::vector<std::uint8_t>& vs, cons
 		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 20,
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 48,
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	} };
 	psoDesc.InputLayout = { inputLayout.data(), static_cast<UINT>(inputLayout.size()) };
@@ -209,8 +212,8 @@ void MeshRenderer::createNoDepthPipelineState(const std::vector<std::uint8_t>& v
 	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 	psoDesc.SampleDesc.Count = 1;
 
-	// 天空盒也用主 input layout（POSITION/UV/NORMAL/COLOR）。
-	std::array<D3D12_INPUT_ELEMENT_DESC, 4> inputLayout = { {
+	// 天空盒也用主 input layout（POSITION/UV/NORMAL/COLOR/TANGENT）。
+	std::array<D3D12_INPUT_ELEMENT_DESC, 5> inputLayout = { {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12,
@@ -218,6 +221,8 @@ void MeshRenderer::createNoDepthPipelineState(const std::vector<std::uint8_t>& v
 		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 20,
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32,
+			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 48,
 			D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	} };
 	psoDesc.InputLayout = { inputLayout.data(), static_cast<UINT>(inputLayout.size()) };
@@ -353,15 +358,15 @@ void MeshRenderer::createTextureDescriptors(const std::vector<Texture*>& texture
 		"Failed to create sampler descriptor heap");
 
 	D3D12_SAMPLER_DESC samplerDesc{};
-	samplerDesc.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+	samplerDesc.Filter = D3D12_FILTER_ANISOTROPIC; // 修斜角三角形 anisotropic aliasing
 	samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 	samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 	samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 	samplerDesc.MipLODBias = 0.0f;
-	samplerDesc.MaxAnisotropy = 1;
+	samplerDesc.MaxAnisotropy = 16;
 	samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
 	samplerDesc.MinLOD = 0.0f;
-	samplerDesc.MaxLOD = 0.0f;
+	samplerDesc.MaxLOD = FLT_MAX;
 	device->CreateSampler(&samplerDesc, _samplerHeap->GetCPUDescriptorHandleForHeapStart());
 }
 
@@ -394,11 +399,11 @@ void MeshRenderer::setLight(const glm::vec3& dir, const glm::vec3& color, const 
 
 void MeshRenderer::render(const glm::mat4& view, const glm::mat4& proj,
 	const std::vector<DrawItem>& items) {
-	render(view, proj, items, _context.currentRtv());
+	render(view, proj, items, _context.currentRtv(), true);
 }
 
 void MeshRenderer::render(const glm::mat4& view, const glm::mat4& proj,
-	const std::vector<DrawItem>& items, const D3D12_CPU_DESCRIPTOR_HANDLE& rtv) {
+	const std::vector<DrawItem>& items, const D3D12_CPU_DESCRIPTOR_HANDLE& rtv, bool clearDepth) {
 	auto* cl = _context.commandList();
 
 	// 视口、清深度、绑定 RTV（默认后台缓冲，可指定离屏 sceneColor）。
@@ -412,7 +417,10 @@ void MeshRenderer::render(const glm::mat4& view, const glm::mat4& proj,
 	cl->RSSetViewports(1, &viewport);
 	cl->RSSetScissorRects(1, &scissor);
 	cl->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
-	cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+	// 程序化地形先画并写深度时（clearDepth=false），保留深度供物体遮挡。
+	if (clearDepth) {
+		cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+	}
 
 	// 公共状态。
 	ID3D12DescriptorHeap* const heaps[] = { _srvHeap.Get(), _samplerHeap.Get() };

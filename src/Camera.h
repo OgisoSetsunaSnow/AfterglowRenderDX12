@@ -38,7 +38,7 @@ private:
 
 	glm::vec3 _target{ 0.0f, 0.0f, 0.0f };
 	float _distance = 7.0f;
-	float _yaw = 0.0f;    // 水平角（度）
-	float _pitch = 30.0f; // 俯仰角（度）
-	float _fov = 60.0f;
+	float _yaw = 0.0f;    // 水平角（度），朝向 +Z（forward.z=cos(yaw)>0，看向 BattleMage/地形）
+	float _pitch = -6.0f; // 俯仰角（度），近平视略俯视（参考 MainCamera z-up(0,2,1) target(0,0,0.8)：相机 y=1 在 target y=0.8 上方）
+	float _fov = 45.0f;   // 对齐参考项目 AfterglowCameraComponent fovY = 45°
 };

@@ -69,6 +69,49 @@ void OffscreenRT::create(D3D12Context& context, UINT width, UINT height,
 	}
 }
 
+void OffscreenRT::createUav(D3D12Context& context, UINT width, UINT height,
+	ID3D12DescriptorHeap* sharedSrvHeap, UINT srvIndex, UINT uavIndex) {
+	_context = &context;
+	auto* device = context.device();
+	const UINT w = width ? width : context.width();
+	const UINT h = height ? height : context.height();
+
+	// compute 输出纹理：R8G8B8A8_UNORM + ALLOW_UNORDERED_ACCESS。
+	D3D12_RESOURCE_DESC texDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+		DXGI_FORMAT_R8G8B8A8_UNORM, w, h, 1, 1);
+	texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+	const CD3DX12_HEAP_PROPERTIES defaultHeap(D3D12_HEAP_TYPE_DEFAULT);
+	CHECK_OK(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &texDesc,
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&_color)),
+		"Failed to create compute UAV texture");
+	_colorState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+	const UINT inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+	// SRV（写共享堆 srvIndex，供 graphics 采样）。
+	D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+	srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srv.Texture2D.MipLevels = 1;
+	_srvHeap = sharedSrvHeap;
+	D3D12_CPU_DESCRIPTOR_HANDLE srvCpu = sharedSrvHeap->GetCPUDescriptorHandleForHeapStart();
+	srvCpu.ptr += static_cast<SIZE_T>(srvIndex) * inc;
+	device->CreateShaderResourceView(_color.Get(), &srv, srvCpu);
+	_srvGpu = sharedSrvHeap->GetGPUDescriptorHandleForHeapStart();
+	_srvGpu.ptr += static_cast<SIZE_T>(srvIndex) * inc;
+
+	// UAV（写共享堆 uavIndex，供 compute 写）。
+	D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+	uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+	D3D12_CPU_DESCRIPTOR_HANDLE uavCpu = sharedSrvHeap->GetCPUDescriptorHandleForHeapStart();
+	uavCpu.ptr += static_cast<SIZE_T>(uavIndex) * inc;
+	device->CreateUnorderedAccessView(_color.Get(), nullptr, &uav, uavCpu);
+	_uavGpu = sharedSrvHeap->GetGPUDescriptorHandleForHeapStart();
+	_uavGpu.ptr += static_cast<SIZE_T>(uavIndex) * inc;
+}
+
 void OffscreenRT::transitionColor(D3D12_RESOURCE_STATES newState) {
 	if (_colorState == newState) {
 		return;

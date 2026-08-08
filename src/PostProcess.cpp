@@ -1,7 +1,8 @@
-#include "PostProcess.h"
+﻿#include "PostProcess.h"
 
 #include <d3dx12.h>
 
+#include <cfloat>
 #include <stdexcept>
 
 #define CHECK_OK(hr, msg) do { if (FAILED(hr)) throw std::runtime_error(msg); } while (0)
@@ -14,48 +15,59 @@ PostProcess::PostProcess(D3D12Context& context,
 	createPipelineState(vsBytes, psBytes);
 	createParamCbv();
 
-	// 采样器（线性 + CLAMP）。
+	// 采样器：s0 scene（线性 CLAMP）、s1 ambient（线性 CLAMP）、s2 terrain（ANISO16 WRAP）、s3 ColorLUT（线性 CLAMP）。
 	auto* device = context.device();
 	D3D12_DESCRIPTOR_HEAP_DESC samplerHeapDesc{};
 	samplerHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
-	samplerHeapDesc.NumDescriptors = 1;
+	samplerHeapDesc.NumDescriptors = 4;
 	samplerHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	CHECK_OK(device->CreateDescriptorHeap(&samplerHeapDesc, IID_PPV_ARGS(&_samplerHeap)),
 		"Failed to create post-process sampler heap");
 
-	D3D12_SAMPLER_DESC samplerDesc{};
-	samplerDesc.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
-	samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-	samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-	samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-	samplerDesc.MaxAnisotropy = 1;
-	samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-	samplerDesc.MinLOD = 0.0f;
-	samplerDesc.MaxLOD = 0.0f;
-	device->CreateSampler(&samplerDesc, _samplerHeap->GetCPUDescriptorHandleForHeapStart());
+	const UINT sInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+	D3D12_CPU_DESCRIPTOR_HANDLE s0 = _samplerHeap->GetCPUDescriptorHandleForHeapStart();
+
+	D3D12_SAMPLER_DESC sceneSamp{};
+	sceneSamp.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+	sceneSamp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	sceneSamp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	sceneSamp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	sceneSamp.MaxAnisotropy = 1;
+	sceneSamp.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	sceneSamp.MinLOD = 0.0f;
+	sceneSamp.MaxLOD = FLT_MAX;
+	device->CreateSampler(&sceneSamp, s0);
+
+	D3D12_SAMPLER_DESC ambSamp = sceneSamp; // ambient equirect（SampleLevel），线性 CLAMP。
+	device->CreateSampler(&ambSamp, CD3DX12_CPU_DESCRIPTOR_HANDLE(s0, 1, sInc));
+
+	D3D12_SAMPLER_DESC terrSamp{};
+	terrSamp.Filter = D3D12_FILTER_ANISOTROPIC;
+	terrSamp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	terrSamp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	terrSamp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	terrSamp.MaxAnisotropy = 16;
+	terrSamp.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	terrSamp.MinLOD = 0.0f;
+	terrSamp.MaxLOD = FLT_MAX;
+	device->CreateSampler(&terrSamp, CD3DX12_CPU_DESCRIPTOR_HANDLE(s0, 2, sInc));
+
+	D3D12_SAMPLER_DESC lutSamp = sceneSamp; // 3D LUT（trilinear Sample），线性 CLAMP。
+	device->CreateSampler(&lutSamp, CD3DX12_CPU_DESCRIPTOR_HANDLE(s0, 3, sInc));
 }
 
 void PostProcess::createRootSignature() {
-	// t0 sceneColor + t1 bloomCombined + t2 depth（都在共享 SRV 堆内）。
-	D3D12_DESCRIPTOR_RANGE srvRanges[3]{};
+	// t0 sceneColor + t1 bloomCombined + t2 depth + t3 noise + t4 ambient + t5 TerrainHeight + t6 ColorLUT（共享 SRV 堆连续）。
+	// 关键：单个 range NumDescriptors=7（t0-t6 连续），表 base 指向共享堆 index 0-6。
+	D3D12_DESCRIPTOR_RANGE srvRanges[1]{};
 	srvRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-	srvRanges[0].NumDescriptors = 1;
+	srvRanges[0].NumDescriptors = 7; // t0-t6
 	srvRanges[0].BaseShaderRegister = 0;
 	srvRanges[0].RegisterSpace = 0;
 
-	srvRanges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-	srvRanges[1].NumDescriptors = 1;
-	srvRanges[1].BaseShaderRegister = 1;
-	srvRanges[1].RegisterSpace = 0;
-
-	srvRanges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-	srvRanges[2].NumDescriptors = 1;
-	srvRanges[2].BaseShaderRegister = 2;
-	srvRanges[2].RegisterSpace = 0;
-
 	D3D12_DESCRIPTOR_RANGE samplerRange{};
 	samplerRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
-	samplerRange.NumDescriptors = 1;
+	samplerRange.NumDescriptors = 4; // s0 scene, s1 ambient, s2 terrain, s3 ColorLUT
 	samplerRange.BaseShaderRegister = 0;
 	samplerRange.RegisterSpace = 0;
 
@@ -66,7 +78,7 @@ void PostProcess::createRootSignature() {
 	params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 	params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-	params[1].DescriptorTable.NumDescriptorRanges = 3;
+	params[1].DescriptorTable.NumDescriptorRanges = 1;
 	params[1].DescriptorTable.pDescriptorRanges = srvRanges;
 	params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
@@ -127,9 +139,14 @@ void PostProcess::render(ID3D12DescriptorHeap* srvHeap,
 	D3D12_GPU_DESCRIPTOR_HANDLE sceneSrv,
 	D3D12_GPU_DESCRIPTOR_HANDLE bloomSrv,
 	D3D12_GPU_DESCRIPTOR_HANDLE depthSrv,
+	D3D12_GPU_DESCRIPTOR_HANDLE noiseSrv,
+	D3D12_GPU_DESCRIPTOR_HANDLE ambientSrv,
+	D3D12_GPU_DESCRIPTOR_HANDLE terrainHeightSrv,
 	const D3D12_CPU_DESCRIPTOR_HANDLE& rtv,
 	const glm::vec3& cameraPos, float nearZ, float farZ, float time,
-	const glm::mat4& view, const glm::vec3& lightDir,
+	const glm::mat4& view, const glm::mat4& invViewProjection,
+	const glm::vec3& lightDir,
+	const glm::vec2& cursorPos,
 	std::uint32_t effects) {
 	auto* cl = _context.commandList();
 	const UINT w = _context.width();
@@ -140,47 +157,37 @@ void PostProcess::render(ID3D12DescriptorHeap* srvHeap,
 	cl->RSSetScissorRects(1, &scissor);
 	cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
 
-	// sceneSrv/bloomSrv/depthSrv 都在同一个 srvHeap（D3D12 限制：一个 CBV_SRV_UAV 堆）。
 	ID3D12DescriptorHeap* const heaps[] = { srvHeap, _samplerHeap.Get() };
 	cl->SetDescriptorHeaps(2, heaps);
-	// 必须先 SetGraphicsRootSignature，再 Set 各根参数（否则用上一个 PSO 的根签名）。
 	cl->SetGraphicsRootSignature(_rootSignature.Get());
 	cl->SetPipelineState(_pso.Get());
 	cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	// b0：相机/雾/光轴参数。
 	struct PostParams {
 		glm::vec4 cameraPosition;
-		glm::vec4 fogColor;
-		glm::mat4 view;          // 光轴：方向光变换到相机空间
-		glm::vec4 dirLightDirection; // 世界空间方向光（光轴用）
-		float nearZ;
-		float farZ;
-		float fogDensity;
-		float time;
-		std::uint32_t effects;   // 位标志：bit0=色差 bit1=尘埃 bit2=暗角
+		glm::vec4 envColor;        // 保留（参考从 ambientTexture 采样 envColor，不再用此字段）
+		glm::mat4 view;
+		glm::mat4 invViewProjection;
+		glm::vec4 dirLightDirection;
+		glm::vec4 params;          // nearZ, farZ, fogDensity, time
+		glm::vec4 screenParams;    // invScreenWidth, invScreenHeight, cursorX, cursorY
+		glm::vec2 aspectRatio;     // 宽高比, 1.0
+		std::uint32_t effects;     // bit3 = noise 调试
 		std::uint32_t pad;
-		float invScreenWidth;
-		float invScreenHeight;
-		float pad2;
-		float pad3;
 	};
 	PostParams* params = nullptr;
 	_paramCbv->Map(0, nullptr, reinterpret_cast<void**>(&params));
 	params->cameraPosition = glm::vec4(cameraPos, 1.0f);
-	params->fogColor = glm::vec4(0.35f, 0.4f, 0.5f, 1.0f); // 雾色（冷灰蓝）
+	params->envColor = glm::vec4(0.7f, 0.75f, 0.85f, 1.0f); // 保留占位（参考从 ambientTexture 采样）
 	params->view = view;
+	params->invViewProjection = invViewProjection;
 	params->dirLightDirection = glm::vec4(glm::normalize(lightDir), 0.0f);
-	params->nearZ = nearZ;
-	params->farZ = farZ;
-	params->fogDensity = 0.08f;
-	params->time = time;
+	params->params = glm::vec4(nearZ, farZ, 0.08f, time);
+	params->screenParams = glm::vec4(1.0f / static_cast<float>(w), 1.0f / static_cast<float>(h),
+		cursorPos.x, cursorPos.y);
+	params->aspectRatio = glm::vec2(static_cast<float>(w) / static_cast<float>(h), 1.0f);
 	params->effects = effects;
 	params->pad = 0;
-	params->invScreenWidth = 1.0f / static_cast<float>(w);
-	params->invScreenHeight = 1.0f / static_cast<float>(h);
-	params->pad2 = 0.0f;
-	params->pad3 = 0.0f;
 	_paramCbv->Unmap(0, nullptr);
 	cl->SetGraphicsRootConstantBufferView(0, _paramCbv->GetGPUVirtualAddress());
 	cl->SetGraphicsRootDescriptorTable(1, srvHeap->GetGPUDescriptorHandleForHeapStart());

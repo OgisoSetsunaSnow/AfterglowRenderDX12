@@ -97,9 +97,15 @@
     <ClCompile Include="src\OffscreenRT.cpp" />
     <ClCompile Include="src\PostProcess.cpp" />
     <ClCompile Include="src\FullScreenPass.cpp" />
+    <ClCompile Include="src\ComputePass.cpp" />
+    <ClCompile Include="src\TerrainRenderer.cpp" />
+    <ClCompile Include="src\WaterRenderer.cpp" />
+    <ClCompile Include="src\CharacterRenderer.cpp" />
+    <ClCompile Include="src\ACES.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Window.h" />
+    <ClInclude Include="src\ACES.h" />
     <ClInclude Include="src\D3D12Core.h" />
     <ClInclude Include="src\ShaderCompiler.h" />
     <ClInclude Include="src\MeshRenderer.h" />
@@ -110,6 +116,9 @@
     <ClInclude Include="src\Model.h" />
     <ClInclude Include="src\OffscreenRT.h" />
     <ClInclude Include="src\PostProcess.h" />
+    <ClInclude Include="src\ComputePass.h" />
+    <ClInclude Include="src\WaterRenderer.h" />
+    <ClInclude Include="src\CharacterRenderer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

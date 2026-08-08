@@ -71,12 +71,14 @@ public:
 
 	// 每帧调用：绘制所有物体，输出到交换链后台缓冲。
 	void render(const glm::mat4& view, const glm::mat4& proj, const std::vector<DrawItem>& items);
-	// 绘制到指定 RTV（阶段 10：离屏 sceneColor）。
+	// 绘制到指定 RTV（阶段 10：离屏 sceneColor）。clearDepth=false 时保留已有深度（程序化地形已写入）。
 	void render(const glm::mat4& view, const glm::mat4& proj, const std::vector<DrawItem>& items,
-		const D3D12_CPU_DESCRIPTOR_HANDLE& rtv);
+		const D3D12_CPU_DESCRIPTOR_HANDLE& rtv, bool clearDepth = true);
 
 	// 阶段 10d：depth 的 SRV（供后处理采样），及资源状态切换。
 	D3D12_GPU_DESCRIPTOR_HANDLE depthSrvHandle() const { return _depthSrvGpu; }
+	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle() const { return _dsvHeap->GetCPUDescriptorHandleForHeapStart(); }
+	ID3D12Resource* depthResource() const { return _depthBuffer.Get(); }
 	void transitionDepthTo(D3D12_RESOURCE_STATES newState);
 
 private:

@@ -23,5 +23,6 @@ glm::mat4 OrbitCamera::viewMatrix() const {
 }
 
 glm::mat4 OrbitCamera::projMatrix(float aspect) const {
-	return glm::perspective(glm::radians(_fov), aspect, 0.01f, 1000.0f);
+	// near/far 对齐参考 AfterglowCameraComponent（0.1 / 1000）。
+	return glm::perspective(glm::radians(_fov), aspect, 0.1f, 1000.0f);
 }

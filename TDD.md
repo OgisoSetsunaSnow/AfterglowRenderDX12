@@ -469,9 +469,9 @@ float4 PSMain(PSIn input) : SV_TARGET {
 | 2 | 深度缓冲 | resize 时不重建 | 中 |
 | 3 | CBV 上传 | 每帧 Map/Unmap 全部物体 | 中 |
 | 4 | 坐标系统 | glm RH 混用 DX12 LH | 低 |
-| 5 | 索引精度 | uint16（<65536 顶点/ mesh） | 中（大模型） |
+| 5 | 索引精度 | ~~uint16~~ 已升级 **uint32**（R32_UINT），支持 >65535 顶点（Terrain 26 万顶点） | 已解决 |
 | 6 | 节点变换 | Model 未应用 assimp 节点层次变换 | 中 |
-| 7 | 渲染能力 | 已实现方向光 + Toon + 模型描边（材质级）；后处理/阴影未做 | 高（对目标效果） |
+| 7 | 渲染能力 | 方向光+Toon+模型描边（材质级）+ 阶段10后处理（bloom/ACES/雾/色差/尘埃/暗角/光轴）+ SkySphere + 3 角色（BattleMage/Yvonne/Ankha）；compute pipeline 已调通（CS 写 UAV → SRV 采样验证通过，readback 确认） | 高（对目标效果） |
 | 8 | 棋盘格颜色 | 测试纹理黄+深蓝（GDI+ 颜色管理） | 低 |
 | 9 | 调试日志 | cout 缓冲不实时，调试打印用 cerr | 低 |
 
@@ -491,7 +491,18 @@ float4 PSMain(PSIn input) : SV_TARGET {
   [✓] 10b：Bloom（DownSampling + HorizontalBlur + VerticalBlur/Combined）
   [✓] 10c：ACES tonemap（Narkowicz Fitted ACES 公式；参考项目 Chromatics ACES2 为未完成实现，见 10c 备注）
   [✓] 10d：depth 采样（可采样 D32 depth + 距离雾）（2026-08-04）
+  [✓] 10d-2：色差/尘埃/暗角/光轴 SkylightShaft（2026-08-05/06，PostProcess 调试按键 1/2/3/5）
+  [✓] SkySphere 天空盒：fbx 半径50000 scale0.01 + 独立 Unlit（方向向量 equirect UV）+ DepthFunc=LESS（2026-08-05）
+  [✓] 角色导入：Yvonne(12mesh)/Ankha(11mesh) + 材质级描边系统（outlineColor per-material）（2026-08-05）
+  [✓] 索引 uint32 升级（R32_UINT）（2026-08-06）
 [ ] 阶段 11：多 pass 框架（Forward / Compute / UI）→ 向参考项目管线靠拢
+  [x] compute pipeline 基础设施：ComputePass + OffscreenRT::createUav + CS 编译 + dispatch（**已调通**：readback 验证 CS 执行 + UAV 写入 + PostProcess 采样全链路红色；根因是 PostProcess 根签名描述符 range offset 全 0 导致 t0-t3 全绑 index 0，已修复为单 range NumDescriptors=4）
+  [x] **ComputePass sampler 支持**（2026-08-08）：构造加 `numSamplerRanges`，root sig 加独立 SAMPLER 描述符表（s0..，offset=0），dispatch 加 `samplerHeap`+`samplers` 参数（SetDescriptorHeaps 同时绑 CBV_SRV_UAV 堆 + SAMPLER 堆）。
+  [x] **TerrainData_CS/Meteorograph 平滑采样**（2026-08-08）：`SampleMeteorograph` 改参考模板版（支持 float4/float2 双线性 SampleLevel）；TerrainData_CS 用双线性替换 Load 点采样（MeteorographSampler s0 / PluviometerSampler s1）。
+  [x] **Meteorograph 格式对齐参考**（2026-08-08）：Meteorograph R16G16B16A16F→**RGBA32F**（textureMode 9）、Pluviometer R16G16B16A16F→**RG16F**（textureMode 4）；Meteorograph_CS/PluviometerInit 对应 RWTexture2D<float2>。
+  [x] **水面 WaterMesh**（2026-08-08）：Water_VS（采样 TerrainHeight.y 水位 + globalOffset 跟随相机）+ Water_FS（折射 waterSceneCopy + 地形法线/沉积物/速度 + FractalSimplexNoise 泡沫 + 深度淡出 + DefaultShading）；WaterRenderer 独立 heap t0-t7（sceneCopy/depth/height/normal/sediment/velocity/fractal/ambient）+ s0-s1；FractalSimplexNoise 256² R32F compute 一次性生成；水 pass depthWrite=false + cullMode=NONE，渲染到离屏 RT（先拷贝场景色做折射源）。
+  [ ] 程序化地形 WaterMesh 细节（水下相机/深度处理）
+  [ ] InstancingGrass / AnkhaFur / Boids（需 MeshRenderer instancing）
 [ ] 阶段 12：OpenImageIO / EXR HDR 支持
 ```
 
