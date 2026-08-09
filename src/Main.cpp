@@ -1,3 +1,8 @@
+// 禁用 Windows min/max 宏（Inreflect.h 使用 std::max/std::min，宏冲突会导致语法错误）。
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "ACES.h"
 #include "Camera.h"
 #include "ComputePass.h"
@@ -9,7 +14,13 @@
 #include "BoidsRenderer.h"
 #include "GrassRenderer.h"
 #include "FurRenderer.h"
+#include "ParticleRenderer.h"
+#include "GuiRenderer.h"
 #include "Mesh.h"
+
+#include <imgui.h>
+#include "GuiInspect.h"
+#include "AudioSystem.h"
 #include "MeshRenderer.h"
 #include "Model.h"
 #include "OffscreenRT.h"
@@ -22,9 +33,82 @@
 
 #include <d3dx12.h>
 
+// 相机模式（从 main 内移到全局，供反射控制类引用）。
+enum class CameraMode { Orbit, Free };
+
+// 反射驱动控制对象（照搬参考项目 AfterglowRenderStatus 的 INR_CLASS/INR_FUNCS 用法）：
+// GUI 的 System 面板自动为下面每个函数生成 参数输入 + Call 按钮。
+class GuiControl {
+public:
+	CameraMode* cameraModePtr = nullptr;
+	OrbitCamera* orbitCameraPtr = nullptr;
+	FreeCamera* freeCameraPtr = nullptr;
+	std::uint32_t* postEffectsPtr = nullptr;
+	glm::vec3* lightDirPtr = nullptr;
+	float* lightIntensityPtr = nullptr;
+
+	void toggleCameraMode();
+	void resetCamera();
+	void setPostEffects(std::uint32_t bits);
+	void clearPostEffects();
+	void setLightDirection(glm::vec3 dir);
+	void setLightIntensity(float intensity);
+	glm::vec3 getLightDirection() const;
+	float getLightIntensity() const;
+};
+
+inline void GuiControl::toggleCameraMode() {
+	if (cameraModePtr) {
+		*cameraModePtr = (*cameraModePtr == CameraMode::Orbit) ? CameraMode::Free : CameraMode::Orbit;
+	}
+}
+inline void GuiControl::resetCamera() {
+	if (orbitCameraPtr) {
+		orbitCameraPtr->setTarget(glm::vec3(0.0f, 0.8f, 0.0f));
+		orbitCameraPtr->setDistance(2.5f);
+	}
+	if (freeCameraPtr) {
+		freeCameraPtr->position = glm::vec3(0.0f, 1.0f, -2.0f);
+		freeCameraPtr->yaw = 90.0f;
+		freeCameraPtr->pitch = -6.0f;
+	}
+}
+inline void GuiControl::setPostEffects(std::uint32_t bits) {
+	if (postEffectsPtr) *postEffectsPtr = bits;
+}
+inline void GuiControl::clearPostEffects() {
+	if (postEffectsPtr) *postEffectsPtr = 0x0u;
+}
+inline void GuiControl::setLightDirection(glm::vec3 dir) {
+	if (lightDirPtr) *lightDirPtr = glm::normalize(dir);
+}
+inline void GuiControl::setLightIntensity(float intensity) {
+	if (lightIntensityPtr) *lightIntensityPtr = intensity;
+}
+inline glm::vec3 GuiControl::getLightDirection() const {
+	return lightDirPtr ? *lightDirPtr : glm::vec3(0.0f);
+}
+inline float GuiControl::getLightIntensity() const {
+	return lightIntensityPtr ? *lightIntensityPtr : 0.0f;
+}
+
+INR_CLASS(GuiControl) {
+	INR_FUNCS(
+		INR_FUNC(toggleCameraMode),
+		INR_FUNC(resetCamera),
+		INR_FUNC(setPostEffects),
+		INR_FUNC(clearPostEffects),
+		INR_FUNC(setLightDirection),
+		INR_FUNC(setLightIntensity),
+		INR_FUNC(getLightDirection),
+		INR_FUNC(getLightIntensity)
+	);
+};
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -51,6 +135,9 @@ int main() {
 		shader::CompileOptions psOptions;
 		psOptions.entryPoint = L"PSMain";
 		psOptions.targetProfile = L"ps_6_0";
+		shader::CompileOptions gsOptions;
+		gsOptions.entryPoint = L"GSMain";
+		gsOptions.targetProfile = L"gs_6_0";
 
 		const std::string shaderFile = "Shaders/Cube.hlsl";
 		const auto vs = shader::compileFromFile(shaderFile, vsOptions);
@@ -210,6 +297,22 @@ int main() {
 	const auto shellFurMaskVs = shader::compileFromFile("Shaders/ShellFur/ShellFurMask_VS.hlsl", vsOptions);
 	std::cout << "[AfterglowRender DX12] compiled Shaders/ShellFur/ShellFurMask_VS.hlsl (vs "
 		<< shellFurMaskVs.size() << "B)" << std::endl;
+	// ParticleExample（照搬参考 ParticleExample.mat：4096 粒子 compute 模拟 + 点精灵渲染）。
+	const std::string particleInitFile = "Shaders/ParticleExample/ParticleExampleInitializer_CS.hlsl";
+	const std::string particleSimFile = "Shaders/ParticleExample/ParticleExample_CS.hlsl";
+	const std::string particleVsFile = "Shaders/ParticleExample/ParticleExample_VS.hlsl";
+	const std::string particleGsFile = "Shaders/ParticleExample/ParticleExample_GS.hlsl";
+	const std::string particleFsFile = "Shaders/ParticleExample/ParticleExample_FS.hlsl";
+	const auto particleInitCs = shader::compileFromFile(particleInitFile, csOptions);
+	const auto particleSimCs = shader::compileFromFile(particleSimFile, csOptions);
+	const auto particleVs = shader::compileFromFile(particleVsFile, vsOptions);
+	const auto particleGs = shader::compileFromFile(particleGsFile, gsOptions);
+	const auto particlePs = shader::compileFromFile(particleFsFile, psOptions);
+	std::cout << "[AfterglowRender DX12] compiled ParticleExample: " << particleInitFile << " ("
+		<< particleInitCs.size() << "B) " << particleSimFile << " (" << particleSimCs.size()
+		<< "B) " << particleVsFile << " (vs " << particleVs.size() << "B) " << particleGsFile
+		<< " (gs " << particleGs.size() << "B) " << particleFsFile << " (ps " << particlePs.size()
+		<< "B)" << std::endl;
 
 	// 角色材质 shader（照搬参考项目 DefaultLit_VS/Endfield*_VS + 各材质 FS + 描边）。
 	// 材质专用 VS：EndfieldBody_VS（normalized position → color.xyz）、EndfieldIris_VS（color.x=tangent.x）、
@@ -237,6 +340,7 @@ int main() {
 		endfieldHairShadowVs, // EndfieldHairShadow → EndfieldHairShadow_VS
 		characterVs,        // DefaultLit → DefaultLit_VS
 		shellFurMaskVs,     // AnkhaMask → ShellFurMask_VS（debug 版 Ankha 身体 mask）
+		characterVs,        // ArcCardShadow → DefaultLit_VS
 	};
 	const std::vector<std::vector<std::uint8_t>> characterFsList = {
 		shader::compileFromFile("Shaders/ArcToon_FS.hlsl", psOptions),           // 0 ArcToon
@@ -251,6 +355,7 @@ int main() {
 		shader::compileFromFile("Shaders/EndfieldHairShadow_FS.hlsl", psOptions),// 9 EndfieldHairShadow
 		shader::compileFromFile("Shaders/DefaultLit_FS.hlsl", psOptions),        // 10 DefaultLit
 		shader::compileFromFile("Shaders/DefaultLit_FS.hlsl", psOptions),        // 11 AnkhaMask（同 DefaultLit_FS）
+		shader::compileFromFile("Shaders/ArcCardShadow_FS.hlsl", psOptions),     // 12 ArcCardShadow（卡面阴影）
 	};
 	// 每材质 PSO 配置（参考项目 .mat：cullMode 0=None 2=Back；Transparency 域 blend + 不写深度）。
 	const std::vector<CharacterMaterialDesc> characterMaterialDescs = {
@@ -266,6 +371,7 @@ int main() {
 		{ D3D12_CULL_MODE_BACK, false, true },  // EndfieldHairShadow（Transparency, depthWrite false）
 		{ D3D12_CULL_MODE_BACK, true, false },  // DefaultLit（cullMode 2）
 		{ D3D12_CULL_MODE_NONE, true, false },  // AnkhaMask（debug Ankha.mat cullMode 0 双面）
+		{ D3D12_CULL_MODE_BACK, false, true },  // ArcCardShadow（ArcCardShadow.mat cullMode 2, Transparency）
 	};
 	const std::vector<std::vector<std::uint8_t>> outlineVsList = {
 		shader::compileFromFile("Shaders/ArcOutline_VS.hlsl", vsOptions),
@@ -413,8 +519,8 @@ int main() {
 		// 阶段 8：参考项目方向光（z-up AfterglowRender）setGlobalEuler({45°, 45°, 30°})，
 		// 颜色 0xFFEEDD00，强度 intPi（≈3.14159）。转换到 y-up：方向近似 (-0.5, 0.7, 0.4)（左侧上方）。
 		const glm::vec3 dirLightColor = glm::vec3(1.0f, 0xEE / 255.0f, 0xDD / 255.0f); // 0xFFEEDD00
-		const float dirLightIntensity = 3.14159265f; // π，对齐参考项目
-		const glm::vec3 sceneLightDir = glm::normalize(glm::vec3(-0.5f, 0.7f, 0.4f));
+		float dirLightIntensity = 3.14159265f; // π，对齐参考项目（GUI 反射按钮可改）
+		glm::vec3 sceneLightDir = glm::normalize(glm::vec3(-0.5f, 0.7f, 0.4f)); // GUI 反射按钮可改
 		meshRenderer.setLight(sceneLightDir,
 			dirLightColor * dirLightIntensity, // MeshRenderer 根签名 w=1.0 硬编码，强度烘到 color
 			glm::vec3(0.12f, 0.12f, 0.15f));
@@ -916,6 +1022,13 @@ int main() {
 			fractalNoise.worleyResource(), fractalNoise.normalResource());
 		std::cout << "[AfterglowRender DX12] created FurRenderer (ShellFur, 8 shells)" << std::endl;
 
+		// ParticleExample（照搬参考 ParticleExample.mat：4096 粒子 compute + GS 公告板点精灵）。
+		ParticleRenderer particleRenderer(context, particleInitCs, particleSimCs, particleVs, particleGs, particlePs,
+			terrainRenderer.heightResource(), terrainRenderer.meteorographResource(),
+			DXGI_FORMAT_R16G16B16A16_FLOAT);
+		particleRenderer.initialize();
+		std::cout << "[AfterglowRender DX12] created ParticleRenderer (4096 particles)" << std::endl;
+
 		FullScreenPass downSamplingPass(context, downSh.vs, downSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
 		FullScreenPass horizontalBlurPass(context, horzSh.vs, horzSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
 		FullScreenPass verticalBlurPass(context, vertSh.vs, vertSh.ps, DXGI_FORMAT_R16G16B16A16_FLOAT);
@@ -1043,8 +1156,10 @@ int main() {
 	{ &ankhaHair, &ankhaHairN, &placeholderBlack, &placeholderBlack, &placeholderBlack },
 	// 16 Ball（Standard/BallPBR）：albedo 白 + DefaultNormal 中性法线
 	{ &placeholderWhite, &defaultNormalTex, &placeholderBlack, &placeholderBlack, &placeholderBlack },
-	// 17 Box（ArcToon 武器材质 BattleMageWeapon.mati）：W00 albedo+sss+ilm
+	// 17 Box/BattleMageWeapon（ArcToon 武器材质 BattleMageWeapon.mati）：W00 albedo+sss+ilm
 	{ &boxAlbedo, &boxSss, &boxIlm, &placeholderBlack, &placeholderBlack },
+	// 18 ArcCardShadow（BattleMage mesh1 卡面阴影）：FS 不采样纹理（全黑占位）
+	{ &placeholderBlack, &placeholderBlack, &placeholderBlack, &placeholderBlack, &placeholderBlack },
 };
 	std::vector<Texture*> materialTextures;
 	for (const auto& g : materialGroups) {
@@ -1057,19 +1172,59 @@ int main() {
 		materialTextures, defaultSkyTex);
 	characterRenderer.setLight(sceneLightDir, dirLightColor, dirLightIntensity);
 
-	// charItems：BattleMage 4 mesh 全 ArcToon + 全描边。
-	// 描边参数对齐 BattleMageOutline.mati：outlineWidth=10, outlineDistanceFadeFactor=0.001，黑色。
+	// charItems：BattleMage 4 mesh 材质分配（参考 AfterglowApplication.cpp battleMageMesh.setMaterial 顺序 + fbx 材质名）。
+	// 参考 .mati：mesh0=BattleMage.mati(ArcToon 身体 19A_Body)+draw1=ArcOutline 描边、
+	//             mesh1=BattleMageCardShadow.mati(ArcCardShadow 半透明黑卡)、
+	//             mesh2=BattleMageWeapon.mati(ArcToon + 19A_Body_W00 武器纹理)、
+	//             mesh3=未覆盖(参考用 defaultMaterial，但 BattleMage 头部/眼睛/头发纹理在 19A_Body 里
+	//                  —— 19A_Body.001 / GD_Hairbase 等共享身体纹理，必须用 ArcToon group 0 才能保留红色)。
+	// 用 fbx 材质名自动判断（不依赖 mesh index 顺序假设），更通用。透明 mesh1 按参考后画。
 	std::vector<CharacterDrawItem> charItems;
-	for (std::size_t i = 0; i < battleMageModel.meshes().size(); ++i) {
-		CharacterDrawItem item;
-		item.mesh = &battleMageModel.meshes()[i];
+	const auto setupBattleMage = [&](CharacterDrawItem& item, int meshIdx) {
+		item.mesh = &battleMageModel.meshes()[meshIdx];
 		item.model = battleMageBase;
+		item.outline = false;
+		const std::string& matName = (meshIdx < static_cast<int>(battleMageModel.materialNames().size()))
+			? battleMageModel.materialNames()[meshIdx] : std::string();
+		// mesh1（参考固定为卡面阴影 BattleMageCardShadow.mati）。
+		if (meshIdx == 1) {
+			item.material = CharacterMaterial::ArcCardShadow;
+			item.textureGroup = 18; // FS 不采样纹理
+			item.params.outlineColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.65f); // BattleMageCardShadow.mati color
+			return;
+		}
+		// 武器：fbx 材质名含 W00/VTX → ArcToon group 17（19A_Body_W00 武器纹理）。
+		if (matName.find("W00") != std::string::npos || matName.find("VTX") != std::string::npos
+			|| matName.find("Weapon") != std::string::npos) {
+			item.material = CharacterMaterial::ArcToon;
+			item.textureGroup = 17; // 19A_Body_W00_base/Sss/ilm
+			return;
+		}
+		// 身体/头部（19A_Body / 19A_Body.001 / Body / Hair）：ArcToon group 0（19A_Body_base/Sss/ilm）。
+		// mesh0 才描边（参考 ArcOutline 仅 mesh0）。
 		item.material = CharacterMaterial::ArcToon;
 		item.textureGroup = 0;
-		item.outline = true;
-		item.params.outlineColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-		item.params.outlineParams = glm::vec4(10.0f, 0.001f, 0.0f, 0.0f);
-		charItems.push_back(item);
+		if (meshIdx == 0) {
+			item.outline = true;
+			item.params.outlineColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+			item.params.outlineParams = glm::vec4(10.0f, 0.001f, 0.0f, 0.0f);
+		}
+	};
+	const int bmOpaqueOrder[] = { 0, 2, 3 };
+	const int bmTransparentOrder[] = { 1 };
+	for (int i : bmOpaqueOrder) {
+		if (i < static_cast<int>(battleMageModel.meshes().size())) {
+			CharacterDrawItem item;
+			setupBattleMage(item, i);
+			charItems.push_back(item);
+		}
+	}
+	for (int i : bmTransparentOrder) {
+		if (i < static_cast<int>(battleMageModel.meshes().size())) {
+			CharacterDrawItem item;
+			setupBattleMage(item, i);
+			charItems.push_back(item);
+		}
 	}
 
 	// Yvonne 12 mesh → CharacterRenderer（参考项目 yvonneMesh.setMaterial 顺序）。
@@ -1153,6 +1308,15 @@ int main() {
 		{ 14, glm::vec4(0.5f, 0.0f, 1.0f, 0.0f) },  // Eye (AnkhaEye.mati)
 		{ 15, glm::vec4(0.75f, 0.5f, 0.4f, 0.0f) }, // Hair (AnkhaHair.mati)
 	};
+	// materialParams3：x=subsurfaceOpacity(1.0) y=irisDepth(0) z=sizeExpand w=depthOffset（ShellFurMask_VS 用）。
+	// —— 对齐参考 .mati 覆盖：AnkhaBody=0.18/0.0004，AnkhaDress=0.25/0.0002，
+	//    Eye/Hair 无覆盖用 Ankha.mat 默认 0.16/0.0002。
+	const glm::vec4 ankMaskParams3[4] = {
+		glm::vec4(1.0f, 0.0f, 0.18f, 0.0004f), // Body (AnkhaBody.mati)
+		glm::vec4(1.0f, 0.0f, 0.25f, 0.0002f), // Dress (AnkhaDress.mati)
+		glm::vec4(1.0f, 0.0f, 0.16f, 0.0002f), // Eye（Ankha.mat 默认）
+		glm::vec4(1.0f, 0.0f, 0.16f, 0.0002f), // Hair（Ankha.mat 默认）
+	};
 	const UINT ankGroup[12] = { 13, 12, 12, 12, 14, 12, 12, 14, 12, 15, 12, 12 };
 	for (std::size_t i = 0; i < ankhaModel.meshes().size(); ++i) {
 		CharacterDrawItem item;
@@ -1171,9 +1335,7 @@ int main() {
 		}
 		const AnkMeshCfg& c = ankCfg[cfgIdx];
 		item.params.materialParams2 = c.params2;
-		// materialParams3：x=subsurfaceOpacity(1.0) y=irisDepth(0) z=sizeExpand(0.16) w=depthOffset(0.0002)
-		// —— 对齐 debug 版 Ankha.mat 的 sizeExpand/depthOffset 标量。
-		item.params.materialParams3 = glm::vec4(1.0f, 0.0f, 0.16f, 0.0002f);
+		item.params.materialParams3 = ankMaskParams3[cfgIdx];
 		item.outline = false;
 		charItems.push_back(item);
 	}
@@ -1234,8 +1396,16 @@ int main() {
 		// PaperAirplane：改由 BoidsRenderer（compute 群集）渲染，见渲染循环 boidsRenderer.render()。
 		// DebugBox.fbx 移除：测试用的 1x1x1 棋盘盒子，无实际用途。
 
+		// ImGui GUI（照搬参考项目 AfterglowGUI：浅色圆角样式 + calibrib.ttf 字体 + `~` 切换 Console 面板）。
+		GuiRenderer gui(context, window.handle());
+
+		// 音乐播放（miniaudio 单文件库；参考项目无音频系统，本项为新增）。
+		// 音乐文件放到 vsbuild/Assets/Music/（支持 mp3/wav/flac/ogg/m4a）。
+		AudioSystem audio;
+		audio.scan("vsbuild/Assets/Music");
+		std::cout << "[AfterglowRender DX12] audio: " << audio.titles().size() << " track(s)" << std::endl;
+
 		// 相机：F 键在轨道/自由之间切换。默认轨道（对齐参考 MainCamera + SimpleController）。
-		enum class CameraMode { Orbit, Free };
 		CameraMode cameraMode = CameraMode::Orbit;
 
 		OrbitCamera orbitCamera;
@@ -1245,13 +1415,41 @@ int main() {
 
 		FreeCamera freeCamera;
 
+		// 后处理效果开关（数字键 1-8 / 0 / 4 与 GUI 反射按钮共享）。
+		std::uint32_t postEffects = 0x7u;
+
+		// 反射驱动控制对象（GUI System 面板按钮，仿参考 AfterglowRenderStatus 用法）。
+		GuiControl guiControl;
+		guiControl.cameraModePtr = &cameraMode;
+		guiControl.orbitCameraPtr = &orbitCamera;
+		guiControl.freeCameraPtr = &freeCamera;
+		guiControl.postEffectsPtr = &postEffects;
+		guiControl.lightDirPtr = &sceneLightDir;
+		guiControl.lightIntensityPtr = &dirLightIntensity;
+		// GUI 反射调用日志（显示到 Console 输出区，参考 AfterglowConsolePanel 的输出文本）。
+		std::vector<std::string> guiLog;
+		const auto guiLogAppend = [&](const std::string& msg) {
+			if (guiLog.size() >= 64) {
+				guiLog.erase(guiLog.begin());
+			}
+			guiLog.push_back(msg);
+		};
+
 		double lastMouseX = 0.0, lastMouseY = 0.0;
 		window.getCursorPos(lastMouseX, lastMouseY);
 		bool fKeyPrev = false;
 
 		// 10d-2 调试：数字键切换后处理效果（1=色差 2=尘埃 3=暗角 4=全开 0=关 5=noise 6=sceneTexture 7=bloomTexture 8=ColorLUT）。
-		std::uint32_t postEffects = 0x7u;
 		bool fxKeyPrev[8] = { false, false, false, false, false, false, false, false }; // 1/2/3/0/5/6/7/8
+
+		// GUI FPS 数据（RenderStatus 面板，参考 AfterglowRenderPanel：平滑 + PlotLines）。
+		std::array<float, 128> fpsData{};
+		std::size_t fpsIdx = 0;
+		float smoothFps = 0.0f;
+		// GUI 面板状态（参考 AfterglowConsolePanel：RenderStatus/System/Scene 三个子面板开关 + 输入框）。
+		bool showRenderStatus = true, showSystemStatus = true, showSceneStatus = false, showAudioStatus = true;
+		char guiInputBuf[256] = {};
+		int selectedSceneEntity = -1;
 
 		const auto start = std::chrono::steady_clock::now();
 		auto lastFrame = std::chrono::steady_clock::now();
@@ -1269,8 +1467,12 @@ int main() {
 			lastFrame = now;
 			const float t = std::chrono::duration<float>(now - start).count();
 
-			// F 键切换相机模式（边沿触发）。
-			const bool fKeyNow = window.isKeyPressed(GLFW_KEY_F);
+			// ImGui 输入捕获：GUI 窗口 hover / InputText 聚焦时暂停相机与快捷键。
+			const bool kbFree = !gui.wantsCaptureKeyboard();
+			const bool mouseFree = !gui.wantsCaptureMouse();
+
+			// F 键切换相机模式（边沿触发）。GUI 聚焦 InputText 时跳过。
+			const bool fKeyNow = kbFree && window.isKeyPressed(GLFW_KEY_F);
 			if (fKeyNow && !fKeyPrev) {
 				cameraMode = (cameraMode == CameraMode::Orbit) ? CameraMode::Free : CameraMode::Orbit;
 				std::cout << "[AfterglowRender DX12] camera mode: "
@@ -1280,7 +1482,7 @@ int main() {
 
 			// 10d-2：数字键切换后处理效果（边沿触发）。
 			auto toggleFx = [&](int key, std::uint32_t bit, int idx, const char* name) {
-				const bool now = window.isKeyPressed(key);
+				const bool now = kbFree && window.isKeyPressed(key);
 				if (now && !fxKeyPrev[idx]) {
 					postEffects ^= bit;
 					std::cout << "[AfterglowRender DX12] fx " << name << (postEffects & bit ? " ON" : " OFF")
@@ -1296,17 +1498,17 @@ int main() {
 			toggleFx(GLFW_KEY_7, 0x20u, 6, "bloomTexture debug"); // 7 = 显示 bloom 原始色（诊断 bloom 偏色）
 			toggleFx(GLFW_KEY_8, 0x40u, 7, "ColorLUT debug"); // 8 = 显示 3D LUT 固定采样（诊断 LUT 内容）
 			// 0 = 全关，4 = 全开（直接赋值）。
-			const bool fxKey0 = window.isKeyPressed(GLFW_KEY_0);
+			const bool fxKey0 = kbFree && window.isKeyPressed(GLFW_KEY_0);
 			if (fxKey0 && !fxKeyPrev[3]) {
 				postEffects = 0x0u;
 				std::cout << "[AfterglowRender DX12] fx all OFF (0x0)" << std::endl;
 			}
 			fxKeyPrev[3] = fxKey0;
-			if (window.isKeyPressed(GLFW_KEY_4)) {
+			if (kbFree && window.isKeyPressed(GLFW_KEY_4)) {
 				postEffects = 0x7u; // 4 = 全开
 			}
 
-			// ---- 相机输入 ----
+			// ---- 相机输入（GUI 捕获鼠标/键盘时暂停）----
 			double mouseX = 0.0, mouseY = 0.0;
 			window.getCursorPos(mouseX, mouseY);
 			const double dx = mouseX - lastMouseX;
@@ -1316,27 +1518,28 @@ int main() {
 
 			glm::mat4 view;
 			if (cameraMode == CameraMode::Orbit) {
-				if (window.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT)) {
+				if (mouseFree && window.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT)) {
 					orbitCamera.rotate(static_cast<float>(dx), static_cast<float>(dy));
 				}
-				if (window.isMouseButtonPressed(GLFW_MOUSE_BUTTON_MIDDLE)) {
+				if (mouseFree && window.isMouseButtonPressed(GLFW_MOUSE_BUTTON_MIDDLE)) {
 					orbitCamera.pan(static_cast<float>(dx), static_cast<float>(dy));
 				}
-				const double scroll = window.consumeScrollOffset();
-				if (scroll != 0.0) {
+				// 滚轮（imgui 回调已接管）：GUI 未 hover 时才缩放相机。
+				const double scroll = gui.consumeScrollOffset();
+				if (scroll != 0.0 && mouseFree) {
 					orbitCamera.zoom(static_cast<float>(-scroll));
 				}
 				view = orbitCamera.viewMatrix();
 			} else {
-				if (window.isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
+				if (mouseFree && window.isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
 					freeCamera.rotate(static_cast<float>(dx), static_cast<float>(dy));
 				}
-				const float forwardAxis = (window.isKeyPressed(GLFW_KEY_W) ? 1.0f : 0.0f)
-					- (window.isKeyPressed(GLFW_KEY_S) ? 1.0f : 0.0f);
-				const float strafeAxis = (window.isKeyPressed(GLFW_KEY_D) ? 1.0f : 0.0f)
-					- (window.isKeyPressed(GLFW_KEY_A) ? 1.0f : 0.0f);
-				const float upAxis = ((window.isKeyPressed(GLFW_KEY_E) || window.isKeyPressed(GLFW_KEY_SPACE)) ? 1.0f : 0.0f)
-					- ((window.isKeyPressed(GLFW_KEY_Q) || window.isKeyPressed(GLFW_KEY_C)) ? 1.0f : 0.0f);
+				const float forwardAxis = (kbFree && window.isKeyPressed(GLFW_KEY_W) ? 1.0f : 0.0f)
+					- (kbFree && window.isKeyPressed(GLFW_KEY_S) ? 1.0f : 0.0f);
+				const float strafeAxis = (kbFree && window.isKeyPressed(GLFW_KEY_D) ? 1.0f : 0.0f)
+					- (kbFree && window.isKeyPressed(GLFW_KEY_A) ? 1.0f : 0.0f);
+				const float upAxis = (kbFree && (window.isKeyPressed(GLFW_KEY_E) || window.isKeyPressed(GLFW_KEY_SPACE)) ? 1.0f : 0.0f)
+					- (kbFree && (window.isKeyPressed(GLFW_KEY_Q) || window.isKeyPressed(GLFW_KEY_C)) ? 1.0f : 0.0f);
 				freeCamera.move(forwardAxis, strafeAxis, upAxis, dt);
 				view = freeCamera.viewMatrix();
 			}
@@ -1416,6 +1619,8 @@ int main() {
 				sceneLightDir, glm::vec4(dirLightColor, dirLightIntensity)); // 0xFFEEDD00 + π
 			meshRenderer.render(view, proj, items, terrainRtv, false);
 			// 角色（CharacterRenderer）：outline 先画 + main pass，用同一离屏 RT + 深度。
+			// 每帧同步光源（GUI 反射按钮可改 sceneLightDir/dirLightIntensity）。
+			characterRenderer.setLight(sceneLightDir, dirLightColor, dirLightIntensity);
 			characterRenderer.render(view, proj, charItems, terrainRtv, meshRenderer.dsvHandle());
 
 			// Boids（照搬参考 BoidInstancing.mat）：每帧 sim + 实例化绘制纸飞机群集。
@@ -1440,6 +1645,11 @@ int main() {
 					sceneLightDir, glm::vec4(dirLightColor, dirLightIntensity),
 					ankhaFurModel.meshes()[0], terrainRtv, meshRenderer.dsvHandle());
 			}
+
+			// ParticleExample（参考 ParticleExample.mat）：粒子模拟 + 点精灵绘制。
+			// render 内部把 offscreen 拷贝到 sceneCopy（折射采样）后还原 RENDER_TARGET。
+			particleRenderer.render(view, proj, cameraPos, t, dt,
+				offscreen.resource(), terrainRtv, meshRenderer.dsvHandle());
 
 			// 水面（照搬参考 WaterMesh.mat）：渲染到同一离屏 RT。
 			// 折射需要"当前场景色"→ 先把 offscreen 拷贝到 waterSceneCopy（offscreen RENDER_TARGET→COPY_SOURCE）。
@@ -1520,6 +1730,215 @@ int main() {
 				glm::vec2(static_cast<float>(mouseX), static_cast<float>(mouseY)), // cursor test（参考 PostProcess_FS）
 				postEffects);
 		}
+
+			// ImGui GUI（照搬参考项目 AfterglowGUI 的 Console 面板结构：标题栏+关闭按钮、输出区、
+			// RenderStatus/System/Scene 子面板开关、功能按钮、输入框。`~` 切换）。
+			// 帧率数据（参考 AfterglowRenderPanel：平滑 + PlotLines）。
+			{
+				const float fps = (dt > 0.0f) ? 1.0f / dt : 0.0f;
+				fpsData[fpsIdx % fpsData.size()] = fps;
+				++fpsIdx;
+				smoothFps = (smoothFps <= 0.0f) ? fps : smoothFps + (fps - smoothFps) * 0.2f;
+			}
+			// 音乐自动切歌（音频线程回调置标志，主线程处理）。
+			audio.update();
+
+			gui.beginFrame();
+			if (gui.consoleOpen) {
+				// 参考 AfterglowPanel::show()：NoTitleBar + 自定义标题 + 红色关闭按钮。
+				ImGui::SetNextWindowSize(ImVec2(430.0f, 640.0f), ImGuiCond_FirstUseEver);
+				ImGui::Begin("Console", &gui.consoleOpen, ImGuiWindowFlags_NoTitleBar);
+				ImGui::SetWindowFontScale(1.2f);
+				ImGui::Text("Console");
+				ImGui::SetWindowFontScale(0.5f);
+				ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().WindowPadding.x);
+				ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 4.0f);
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.2f, 0.2f, 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.05f, 0.05f, 1.0f));
+				if (ImGui::Button(" ", ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()))) {
+					gui.consoleOpen = false;
+				}
+				ImGui::PopStyleColor(3);
+				ImGui::SetWindowFontScale(1.0f);
+				ImGui::Separator();
+				ImGui::Spacing();
+
+				// 输出区（参考 AfterglowConsolePanel::renderContext 的 ConsoleOutput：日志 + 滚动）。
+				ImGui::BeginChild("ConsoleOutput", ImVec2(ImGui::GetContentRegionAvail().x, 88.0f), ImGuiChildFlags_Borders);
+				ImGui::SetWindowFontScale(0.8f);
+				if (guiLog.empty()) {
+					ImGui::Text("AfterglowRender DX12 - D3D12 port");
+					ImGui::Text("Keys: F camera | ~ console | 0-8 post effects");
+				}
+				const std::size_t logStart = guiLog.size() > 6 ? guiLog.size() - 6 : 0;
+				for (std::size_t li = logStart; li < guiLog.size(); ++li) {
+					ImGui::Text("%s", guiLog[li].c_str());
+				}
+				ImGui::SetWindowFontScale(1.0f);
+				ImGui::EndChild();
+				ImGui::Spacing();
+
+				// 子面板开关（参考 AfterglowConsolePanel::renderPanels 的 3 个 Checkbox + 新增 Audio）。
+				ImGui::Checkbox("RenderStatus", &showRenderStatus);
+				ImGui::SameLine();
+				ImGui::Checkbox("System", &showSystemStatus);
+				ImGui::SameLine();
+				ImGui::Checkbox("Scene", &showSceneStatus);
+				ImGui::SameLine();
+				ImGui::Checkbox("Audio", &showAudioStatus);
+				ImGui::Separator();
+
+				// ---- RenderStatus 面板（参考 AfterglowRenderPanel：Device/FPS/PlotLines + 功能按钮）----
+				if (showRenderStatus && ImGui::CollapsingHeader("RenderStatus", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::Text("Device: %s", gui.deviceName().c_str());
+					ImGui::Text("Resolution: %u x %u", context.width(), context.height());
+					ImGui::Text("FPS: %.1f", smoothFps);
+					ImGui::PlotLines("##FramePerSecond", fpsData.data(), static_cast<int>(fpsData.size()), 0,
+						"FPS", 0.0f, 144.0f, ImVec2(ImGui::GetContentRegionAvail().x, 64.0f));
+					ImGui::Separator();
+					ImGui::Text("Post-process effects:");
+					const auto fxCheckbox = [&](const char* label, std::uint32_t bit) {
+						bool on = (postEffects & bit) != 0;
+						if (ImGui::Checkbox(label, &on)) {
+							postEffects ^= bit;
+						}
+					};
+					fxCheckbox("Chromatic aberration", 0x1u);
+					fxCheckbox("Dust", 0x2u);
+					fxCheckbox("Vignette", 0x4u);
+					fxCheckbox("Compute noise view", 0x8u);
+					fxCheckbox("Scene texture view", 0x10u);
+					fxCheckbox("Bloom texture view", 0x20u);
+					fxCheckbox("ColorLUT view", 0x40u);
+					if (ImGui::Button("Effects all OFF (key 0)")) {
+						postEffects = 0x0u;
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Effects all ON (key 4)")) {
+						postEffects = 0x7u;
+					}
+				}
+
+				// ---- System 面板（参考 AfterglowSystemPanel：FPS/PlotLines + 相机控制按钮）----
+				if (showSystemStatus && ImGui::CollapsingHeader("System", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::Text("Camera mode: %s", (cameraMode == CameraMode::Orbit) ? "Orbit" : "Free");
+					ImGui::Text("Camera pos: (%.2f, %.2f, %.2f)", cameraPos.x, cameraPos.y, cameraPos.z);
+					ImGui::Text("Dir light dir: (%.2f, %.2f, %.2f)", sceneLightDir.x, sceneLightDir.y, sceneLightDir.z);
+					if (ImGui::Button("Switch camera mode (F)")) {
+						cameraMode = (cameraMode == CameraMode::Orbit) ? CameraMode::Free : CameraMode::Orbit;
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Reset camera")) {
+						orbitCamera.setTarget(glm::vec3(0.0f, 0.8f, 0.0f));
+						orbitCamera.setDistance(2.5f);
+						freeCamera.position = glm::vec3(0.0f, 1.0f, -2.0f);
+						freeCamera.yaw = 90.0f;
+						freeCamera.pitch = -6.0f;
+					}
+					ImGui::Text("FPS: %.1f", smoothFps);
+					ImGui::PlotLines("##FramePerSecond2", fpsData.data(), static_cast<int>(fpsData.size()), 0,
+						nullptr, 0.0f, 144.0f, ImVec2(ImGui::GetContentRegionAvail().x, 48.0f));
+					ImGui::Separator();
+					// 反射驱动函数按钮（仿参考 AfterglowRenderStatus：参数输入 + Call 按钮 + 返回值日志）。
+					ImGui::Text("Reflection controls:");
+					guiInspect::renderFunctions<GuiControl>(guiControl, guiLogAppend);
+				}
+
+				// ---- Scene 面板（参考 AfterglowScenePanel：实体层级选择 + 详情）----
+				if (showSceneStatus && ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen)) {
+					struct SceneEntityInfo {
+						const char* name; glm::vec3 pos; UINT meshCount; const char* info;
+					};
+					const SceneEntityInfo sceneEntities[] = {
+						{ "BattleMage", glm::vec3(battleMageBase[3]), static_cast<UINT>(battleMageModel.meshes().size()), "ArcToon + CardShadow + Weapon" },
+						{ "Yvonne", glm::vec3(yvonneBase[3]), static_cast<UINT>(yvonneModel.meshes().size()), "Endfield materials + outline" },
+						{ "Ankha", glm::vec3(ankhaBase[3]), static_cast<UINT>(ankhaModel.meshes().size()), "DefaultLit + ShellFur mask" },
+						{ "Ball", glm::vec3(4.0f, 2.0f, 0.0f), sphereModel.meshes().empty() ? 0u : 1u, "Sphere + BallPBR" },
+						{ "SkySphere", glm::vec3(0.0f), skySphereModel.meshes().empty() ? 0u : 1u, "equirect sky, radius 500" },
+					};
+					const int entCount = static_cast<int>(sizeof(sceneEntities) / sizeof(sceneEntities[0]));
+					for (int e = 0; e < entCount; ++e) {
+						const bool selected = (selectedSceneEntity == e);
+						if (ImGui::Selectable(sceneEntities[e].name, selected)) {
+							selectedSceneEntity = e;
+						}
+					}
+					if (selectedSceneEntity >= 0 && selectedSceneEntity < entCount) {
+						const auto& ent = sceneEntities[selectedSceneEntity];
+						ImGui::Separator();
+						ImGui::Text("Entity: %s", ent.name);
+						ImGui::Text("World pos: (%.2f, %.2f, %.2f)", ent.pos.x, ent.pos.y, ent.pos.z);
+						ImGui::Text("Meshes: %u", ent.meshCount);
+						ImGui::TextWrapped("Info: %s", ent.info);
+					}
+				}
+
+				// ---- Audio 面板（音乐控制，miniaudio）----
+				if (showAudioStatus && ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
+					ImGui::PushID("AudioPanel");
+					if (!audio.hasMusic()) {
+						ImGui::TextWrapped("No music found. Put audio files in vsbuild/Assets/Music/ (mp3/wav/flac/ogg/m4a)");
+					} else {
+						ImGui::Text("Now playing: %s", audio.currentTitle().c_str());
+						ImGui::Text("Track: %d / %d", audio.currentIndex() + 1, static_cast<int>(audio.titles().size()));
+						if (audio.isPlaying()) {
+							if (ImGui::Button("Pause")) {
+								audio.pause();
+							}
+						} else if (audio.currentIndex() >= 0 && audio.isPaused()) {
+							if (ImGui::Button("Resume")) {
+								audio.resume();
+							}
+						} else {
+							if (ImGui::Button("Play")) {
+								audio.play(0);
+							}
+						}
+						ImGui::SameLine();
+						if (ImGui::Button("Previous")) {
+							audio.previous();
+						}
+						ImGui::SameLine();
+						if (ImGui::Button("Next")) {
+							audio.next();
+						}
+						ImGui::SameLine();
+						if (ImGui::Button("Stop")) {
+							audio.stop();
+						}
+						float audioVol = audio.volume();
+						if (ImGui::SliderFloat("Volume", &audioVol, 0.0f, 1.0f)) {
+							audio.setVolume(audioVol);
+						}
+						bool loop = audio.loopCurrent();
+						if (ImGui::Checkbox("Loop current", &loop)) {
+							audio.setLoopCurrent(loop);
+						}
+						ImGui::Separator();
+						const auto& audioTitles = audio.titles();
+						for (int ai = 0; ai < static_cast<int>(audioTitles.size()); ++ai) {
+							const bool selected = (audio.currentIndex() == ai);
+							if (ImGui::Selectable(audioTitles[ai].c_str(), selected)) {
+								audio.play(ai);
+							}
+						}
+					}
+					ImGui::PopID();
+				}
+
+				// 输入框（参考 AfterglowConsolePanel 底部 InputTextWithHint）。
+				ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+				if (ImGui::InputTextWithHint("##ConsoleInput", ">", guiInputBuf, sizeof(guiInputBuf),
+						ImGuiInputTextFlags_EnterReturnsTrue)) {
+					std::cout << "[GUI] command: " << guiInputBuf << std::endl;
+					guiInputBuf[0] = '\0';
+				}
+
+				ImGui::End();
+			}
+			gui.render();
+
 			context.transitionCurrentBackBuffer(D3D12_RESOURCE_STATE_RENDER_TARGET,
 				D3D12_RESOURCE_STATE_PRESENT);
 

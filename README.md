@@ -14,9 +14,16 @@ DX12/                            # 仓库根 = 工程根
 ├── README.md
 ├── TDD.md
 ├── .gitignore
-├── src/                         # C++ 源码
+├── src/                         # C++ 源码（按功能分子目录）
+│   ├── Main.cpp                 # 场景/渲染循环入口
+│   ├── Core/                    # D3D12Context、Window、Mesh、Model、Texture、相机
+│   ├── Renderers/               # Mesh/Character/Terrain/Water/Grass/Boids/Fur/Particle
+│   ├── Passes/                  # OffscreenRT、PostProcess、FullScreenPass、ComputePass
+│   ├── Utils/                   # ACES、FractalNoise、ShaderCompiler、GuiInspect（反射按钮）
+│   ├── Audio/                   # AudioSystem（miniaudio 音乐播放）
+│   └── GUI/                     # GuiRenderer（imgui 集成）
 ├── include/d3dx12.h             # CD3DX12 辅助头
-├── Shaders/Cube.hlsl            # HLSL shader
+├── Shaders/                     # HLSL shader（角色/地形/草/水面/后处理等）
 ├── Textures/checker.png         # 测试纹理
 └── vsbuild/                     # 工程直接引用（路径写死在 vcxproj 中）
     ├── Libraries/               # 精简依赖库（仅构建所需）
@@ -24,10 +31,15 @@ DX12/                            # 仓库根 = 工程根
     │   ├── glm-1.0.1/           # 数学（header-only）
     │   ├── VulkanSDK-1.3.290.0/ # 仅 DXC：dxcapi.h / dxcompiler.lib / dxcompiler.dll
     │   ├── assimp-5.4.3/        # 模型加载（头文件随仓库；静态库见"第三方依赖库"）
-    │   └── openimageio-3.0.9.1/ # 仅 assimp 静态依赖链接库 + 运行时 DLL（Debug zlibd1 / Release zlib1+bz2+liblzma）
+    │   ├── openimageio-3.0.9.1/ # 仅 assimp 静态依赖链接库 + 运行时 DLL
+    │   ├── imgui-1.92.3/        # ImGui + glfw/dx12 后端
+    │   ├── Inreflect/           # 反射库（GUI 反射按钮，照搬参考项目）
+    │   └── miniaudio/           # 单头文件音频库（音乐播放）
     └── Assets/                  # 运行资源（仅程序引用部分）
         ├── Characters/BattleMage/  # BattleMage.fbx + 贴图
-        └── Shared/Models/Box.fbx
+        ├── Shared/Fonts/calibrib.ttf  # GUI 字体
+        ├── Shared/Models/Box.fbx
+        └── Music/               # 音乐播放列表（mp3/wav/flac/ogg/m4a）
 ```
 
 ## 环境要求

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -50,7 +50,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;vsbuild\Libraries\glfw-3.4.bin.WIN64\include;vsbuild\Libraries\glm-1.0.1;vsbuild\Libraries\VulkanSDK-1.3.290.0\Include;vsbuild\Libraries\assimp-5.4.3\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\Core;$(ProjectDir)src\Renderers;$(ProjectDir)src\Passes;$(ProjectDir)src\Utils;$(ProjectDir)src\Audio;$(ProjectDir)src\GUI;$(ProjectDir)include;vsbuild\Libraries\glfw-3.4.bin.WIN64\include;vsbuild\Libraries\glm-1.0.1;vsbuild\Libraries\VulkanSDK-1.3.290.0\Include;vsbuild\Libraries\assimp-5.4.3\include;vsbuild\Libraries\imgui-1.92.3;vsbuild\Libraries\imgui-1.92.3\backends;vsbuild\Libraries\Inreflect;vsbuild\Libraries\miniaudio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
@@ -70,7 +70,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;vsbuild\Libraries\glfw-3.4.bin.WIN64\include;vsbuild\Libraries\glm-1.0.1;vsbuild\Libraries\VulkanSDK-1.3.290.0\Include;vsbuild\Libraries\assimp-5.4.3\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\Core;$(ProjectDir)src\Renderers;$(ProjectDir)src\Passes;$(ProjectDir)src\Utils;$(ProjectDir)src\Audio;$(ProjectDir)src\GUI;$(ProjectDir)include;vsbuild\Libraries\glfw-3.4.bin.WIN64\include;vsbuild\Libraries\glm-1.0.1;vsbuild\Libraries\VulkanSDK-1.3.290.0\Include;vsbuild\Libraries\assimp-5.4.3\include;vsbuild\Libraries\imgui-1.92.3;vsbuild\Libraries\imgui-1.92.3\backends;vsbuild\Libraries\Inreflect;vsbuild\Libraries\miniaudio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
@@ -85,48 +85,62 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\Main.cpp" />
-    <ClCompile Include="src\Window.cpp" />
-    <ClCompile Include="src\D3D12Core.cpp" />
-    <ClCompile Include="src\ShaderCompiler.cpp" />
-    <ClCompile Include="src\MeshRenderer.cpp" />
-    <ClCompile Include="src\Texture.cpp" />
-    <ClCompile Include="src\Camera.cpp" />
-    <ClCompile Include="src\FreeCamera.cpp" />
-    <ClCompile Include="src\Mesh.cpp" />
-    <ClCompile Include="src\Model.cpp" />
-    <ClCompile Include="src\OffscreenRT.cpp" />
-    <ClCompile Include="src\PostProcess.cpp" />
-    <ClCompile Include="src\FullScreenPass.cpp" />
-    <ClCompile Include="src\ComputePass.cpp" />
-    <ClCompile Include="src\TerrainRenderer.cpp" />
-    <ClCompile Include="src\FractalNoise.cpp" />
-    <ClCompile Include="src\BoidsRenderer.cpp" />
-    <ClCompile Include="src\GrassRenderer.cpp" />
-    <ClCompile Include="src\FurRenderer.cpp" />
-    <ClCompile Include="src\WaterRenderer.cpp" />
-    <ClCompile Include="src\CharacterRenderer.cpp" />
-    <ClCompile Include="src\ACES.cpp" />
+    <ClCompile Include="src\Core\Window.cpp" />
+    <ClCompile Include="src\Core\D3D12Core.cpp" />
+    <ClCompile Include="src\Utils\ShaderCompiler.cpp" />
+    <ClCompile Include="src\Renderers\MeshRenderer.cpp" />
+    <ClCompile Include="src\Core\Texture.cpp" />
+    <ClCompile Include="src\Core\Camera.cpp" />
+    <ClCompile Include="src\Core\FreeCamera.cpp" />
+    <ClCompile Include="src\Core\Mesh.cpp" />
+    <ClCompile Include="src\Core\Model.cpp" />
+    <ClCompile Include="src\Passes\OffscreenRT.cpp" />
+    <ClCompile Include="src\Passes\PostProcess.cpp" />
+    <ClCompile Include="src\Passes\FullScreenPass.cpp" />
+    <ClCompile Include="src\Passes\ComputePass.cpp" />
+    <ClCompile Include="src\Renderers\TerrainRenderer.cpp" />
+    <ClCompile Include="src\Utils\FractalNoise.cpp" />
+    <ClCompile Include="src\Renderers\BoidsRenderer.cpp" />
+    <ClCompile Include="src\Renderers\GrassRenderer.cpp" />
+    <ClCompile Include="src\Renderers\FurRenderer.cpp" />
+    <ClCompile Include="src\Renderers\ParticleRenderer.cpp" />
+    <ClCompile Include="src\Renderers\WaterRenderer.cpp" />
+    <ClCompile Include="src\Renderers\CharacterRenderer.cpp" />
+    <ClCompile Include="src\Utils\ACES.cpp" />
+    <ClCompile Include="src\GUI\GuiRenderer.cpp" />
+    <ClCompile Include="src\Audio\AudioSystem.cpp" />
+    <ClCompile Include="vsbuild\Libraries\imgui-1.92.3\imgui.cpp" />
+    <ClCompile Include="vsbuild\Libraries\imgui-1.92.3\imgui_draw.cpp" />
+    <ClCompile Include="vsbuild\Libraries\imgui-1.92.3\imgui_tables.cpp" />
+    <ClCompile Include="vsbuild\Libraries\imgui-1.92.3\imgui_widgets.cpp" />
+    <ClCompile Include="vsbuild\Libraries\imgui-1.92.3\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="vsbuild\Libraries\imgui-1.92.3\backends\imgui_impl_dx12.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\Window.h" />
-    <ClInclude Include="src\ACES.h" />
-    <ClInclude Include="src\D3D12Core.h" />
-    <ClInclude Include="src\ShaderCompiler.h" />
-    <ClInclude Include="src\MeshRenderer.h" />
-    <ClInclude Include="src\Texture.h" />
-    <ClInclude Include="src\Camera.h" />
-    <ClInclude Include="src\FreeCamera.h" />
-    <ClInclude Include="src\Mesh.h" />
-    <ClInclude Include="src\Model.h" />
-    <ClInclude Include="src\OffscreenRT.h" />
-    <ClInclude Include="src\PostProcess.h" />
-    <ClInclude Include="src\ComputePass.h" />
-    <ClInclude Include="src\FractalNoise.h" />
-    <ClInclude Include="src\BoidsRenderer.h" />
-    <ClInclude Include="src\GrassRenderer.h" />
-    <ClInclude Include="src\FurRenderer.h" />
-    <ClInclude Include="src\WaterRenderer.h" />
-    <ClInclude Include="src\CharacterRenderer.h" />
+    <ClInclude Include="src\Core\Window.h" />
+    <ClInclude Include="src\Utils\ACES.h" />
+    <ClInclude Include="src\Core\D3D12Core.h" />
+    <ClInclude Include="src\Utils\ShaderCompiler.h" />
+    <ClInclude Include="src\Renderers\MeshRenderer.h" />
+    <ClInclude Include="src\Core\Texture.h" />
+    <ClInclude Include="src\Core\Camera.h" />
+    <ClInclude Include="src\Core\FreeCamera.h" />
+    <ClInclude Include="src\Core\Mesh.h" />
+    <ClInclude Include="src\Core\Model.h" />
+    <ClInclude Include="src\Passes\OffscreenRT.h" />
+    <ClInclude Include="src\Passes\PostProcess.h" />
+    <ClInclude Include="src\Passes\ComputePass.h" />
+    <ClInclude Include="src\Utils\FractalNoise.h" />
+    <ClInclude Include="src\Renderers\BoidsRenderer.h" />
+    <ClInclude Include="src\Renderers\GrassRenderer.h" />
+    <ClInclude Include="src\Renderers\FurRenderer.h" />
+    <ClInclude Include="src\Renderers\ParticleRenderer.h" />
+    <ClInclude Include="src\Renderers\WaterRenderer.h" />
+    <ClInclude Include="src\Renderers\CharacterRenderer.h" />
+    <ClInclude Include="src\Passes\FullScreenPass.h" />
+    <ClInclude Include="src\GUI\GuiRenderer.h" />
+    <ClInclude Include="src\Utils\GuiInspect.h" />
+    <ClInclude Include="src\Audio\AudioSystem.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
@@ -153,3 +167,5 @@
           DestinationFolder="$(OutDir)" />
   </Target>
 </Project>
+
+

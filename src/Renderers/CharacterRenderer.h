@@ -27,6 +27,7 @@ enum class CharacterMaterial : int {
 	EndfieldHairShadow, // Yvonne HairShadow（无纹理，HairShadow_VS，半透明）
 	DefaultLit,         // Ankha（albedo+normal）
 	AnkhaMask,          // Ankha 身体（debug 版：ShellFurMask_VS + DefaultLit_FS，sizeExpand/depthOffset mask）
+	ArcCardShadow,      // BattleMage mesh1 卡面阴影（DefaultLit_VS + ArcCardShadow_FS，Transparency 半透明）
 	Count
 };
 

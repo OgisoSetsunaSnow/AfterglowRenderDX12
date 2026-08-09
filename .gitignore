@@ -31,9 +31,14 @@ Thumbs.db
 Desktop.ini
 run_out*.txt
 run_err*.txt
+imgui.ini
 
 # ===== assimp 静态库（约 540MB，过大不入库，见 README"第三方依赖库"节自行下载） =====
 vsbuild/Libraries/assimp-5.4.3/lib/*.lib
+
+# ===== 本地音乐（版权/个人文件，不入库；仅保留说明文件） =====
+vsbuild/Assets/Music/*
+!vsbuild/Assets/Music/README.txt
 
 # ===== 备份与系统文件 =====
 *.bak
