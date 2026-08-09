@@ -40,6 +40,10 @@ vsbuild/Libraries/assimp-5.4.3/lib/*.lib
 vsbuild/Assets/Music/*
 !vsbuild/Assets/Music/README.txt
 
+# ===== 发行版打包产物（不入库；make_release.ps1 生成 Release_Package/ 和 zip） =====
+Release_Package/
+AfterglowRenderDX12_Release.zip
+
 # ===== 备份与系统文件 =====
 *.bak
 *.orig

@@ -1,4 +1,4 @@
-// 禁用 Windows min/max 宏（Inreflect.h 使用 std::max/std::min，宏冲突会导致语法错误）。
+﻿// 禁用 Windows min/max 宏（Inreflect.h 使用 std::max/std::min，宏冲突会导致语法错误）。
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -391,37 +391,37 @@ int main() {
 			<< texture.width() << "x" << texture.height() << std::endl;
 
 		Texture battleMageBody;
-		battleMageBody.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_base.png");
+		battleMageBody.load(context, "vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_base.png");
 		std::cout << "[AfterglowRender DX12] loaded BattleMage body texture "
 			<< battleMageBody.width() << "x" << battleMageBody.height() << std::endl;
 
 		Texture battleMageDecal;
-		battleMageDecal.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_Decal.png");
+		battleMageDecal.load(context, "vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_Decal.png");
 		std::cout << "[AfterglowRender DX12] loaded BattleMage decal texture "
 			<< battleMageDecal.width() << "x" << battleMageDecal.height() << std::endl;
 
 		// Box 用 ArcToon 武器材质（参考 BattleMageWeapon.mati，W00 系列纹理）。
 		Texture boxAlbedo, boxSss, boxIlm;
-		boxAlbedo.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_W00_base.png");
-		boxSss.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_W00_Sss.png");
-		boxIlm.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Base/19A_Body_W00_ilm.png");
+		boxAlbedo.load(context, "vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_W00_base.png");
+		boxSss.load(context, "vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_W00_Sss.png");
+		boxIlm.load(context, "vsbuild/Assets/Characters/BattleMage/Textures/Base/19A_Body_W00_ilm.png");
 		std::cout << "[AfterglowRender DX12] loaded Box weapon textures "
 			<< boxAlbedo.width() << "x" << boxAlbedo.height() << std::endl;
 
 		// SkySphere 天空贴图（参考项目 Shared/Textures/DefaultSky.png）。
 		Texture skyTexture;
-		skyTexture.load(context, "../vsbuild/Assets/Shared/Textures/DefaultSky.png");
+		skyTexture.load(context, "vsbuild/Assets/Shared/Textures/DefaultSky.png");
 		std::cout << "[AfterglowRender DX12] loaded sky texture "
 			<< skyTexture.width() << "x" << skyTexture.height() << std::endl;
 
 		// 角色材质共用：DefaultSky（IBL 环境贴图，参考项目 ambientTexture）。
 		Texture defaultSkyTex;
-		defaultSkyTex.load(context, "../vsbuild/Assets/Shared/Textures/DefaultSky.png");
+		defaultSkyTex.load(context, "vsbuild/Assets/Shared/Textures/DefaultSky.png");
 
 		// 角色材质：BattleMage 额外纹理（参考 ArcToon.mat 需要 sss + ilm 3 纹理）。
 		Texture battleMageSss, battleMageIlm;
-		battleMageSss.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_Sss.png");
-		battleMageIlm.load(context, "../vsbuild/Assets/Characters/BattleMage/Textures/Base/19A_Body_ilm.png");
+		battleMageSss.load(context, "vsbuild/Assets/Characters/BattleMage/Textures/Color01/19A_Body_Sss.png");
+		battleMageIlm.load(context, "vsbuild/Assets/Characters/BattleMage/Textures/Base/19A_Body_ilm.png");
 		std::cout << "[AfterglowRender DX12] loaded BattleMage sss/ilm for ArcToon material "
 			<< battleMageSss.width() << "x" << battleMageSss.height() << std::endl;
 
@@ -435,7 +435,7 @@ int main() {
 
 		// Yvonne（第二个角色）：albedo 纹理（参考项目 Yvonne*.mati 的 albedoTex 引用）。
 		Texture yvonneBody, yvonneCloth1, yvonneCloth2, yvonneFace, yvonneIris, yvonneHair;
-		const char* yvTexDir = "../vsbuild/Assets/Characters/Yvonne/Textures/";
+		const char* yvTexDir = "vsbuild/Assets/Characters/Yvonne/Textures/";
 		yvonneBody.load(context, std::string(yvTexDir) + "T_actor_yvonne_body_01_D.png");   // mesh 0 Body / 1 Neck
 		yvonneCloth1.load(context, std::string(yvTexDir) + "T_actor_yvonne_cloth_01_D.png"); // mesh 2 Cloth / 4 ThinFilm / 5 Cloth
 		yvonneCloth2.load(context, std::string(yvTexDir) + "T_actor_yvonne_cloth_02_D.png"); // mesh 3 Tail
@@ -447,7 +447,7 @@ int main() {
 			<< " / " << yvonneHair.width() << "x" << yvonneHair.height() << std::endl;
 
 		// Yvonne 其余材质纹理（照搬 Yvonne*.mati 的 texture 引用；法线/property/st 等线性数据用 UNORM）。
-		const char* yvComDir = "../vsbuild/Assets/Characters/Yvonne/Textures/Common/";
+		const char* yvComDir = "vsbuild/Assets/Characters/Yvonne/Textures/Common/";
 		Texture yvBodyN, yvCloth1N, yvCloth2N, yvCloth1P, yvCloth2P, yvCloth1M, yvCloth5RS;
 		Texture yvHairHN, yvHairP, yvHairST;
 		Texture yvBodyRD, yvFaceRD, yvFaceHlM, yvFaceSDF, yvFaceCmM, yvHairRD, yvMatcap05, yvMatcap07;
@@ -473,7 +473,7 @@ int main() {
 
 		// Ankha（第三个角色）：albedo 纹理（参考项目 Ankha*.mati 的 albedoTex 引用）。
 		Texture ankhaBody, ankhaDress, ankhaEye, ankhaHair;
-		const char* ankTexDir = "../vsbuild/Assets/Characters/Ankha/Textures/";
+		const char* ankTexDir = "vsbuild/Assets/Characters/Ankha/Textures/";
 		ankhaBody.load(context, std::string(ankTexDir) + "BODY TEXTURE.png");        // mesh 1/2/3/5/6/8/10
 		ankhaDress.load(context, std::string(ankTexDir) + "DRESS TEXTURE.png");      // mesh 0
 		ankhaEye.load(context, std::string(ankTexDir) + "EYE TEXTURE.png");          // mesh 4/7
@@ -815,7 +815,7 @@ int main() {
 		// ---- 程序化地形（完整照搬参考项目数据流）----
 		// 纹理：MossyGrass(草地)/ButtressRoot(坡地 albedo+property)/RockCliff(坡地 normal)，
 		// ambient 用 DefaultSky（IBL）。资产在参考项目 release/debug 预编译目录。
-		const std::string terrTex = "../../AfterglowRender_v0.1_x64_release/Assets/Shared/Textures/Terrain/";
+		const std::string terrTex = "vsbuild/Assets/Shared/Textures/Terrain/";
 		TerrainRenderer::TexturePaths terrainPaths{
 			terrTex + "MossyGrass/T_MossyGrass_01_BC.PNG",
 			terrTex + "MossyGrass/T_MossyGrass_01_N.PNG",
@@ -823,7 +823,7 @@ int main() {
 			terrTex + "ButtressRoot/T_ButtressRoot_01_BC.PNG",
 			terrTex + "RockCliff/T_RockCliff_01_N.PNG",
 			terrTex + "ButtressRoot/T_ButtressRoot_01_AoRDp.PNG",
-			"../vsbuild/Assets/Shared/Textures/DefaultSky.png",
+			"vsbuild/Assets/Shared/Textures/DefaultSky.png",
 		};
 		TerrainRenderer terrainRenderer(context, terrainVs, terrainPs, terrainPaths, 4096);
 		// PostProcess t5 = TerrainHeight（UnderwaterMask 采样水面高度）。写到共享堆 index 5。
@@ -998,7 +998,7 @@ int main() {
 		// grassAlbedo = MossyGrass BC（terrain 同款）；FractalNormal 来自 FractalNoise；数据纹理来自 terrain。
 		Texture grassAlbedoTex;
 		grassAlbedoTex.load(context,
-			"../../AfterglowRender_v0.1_x64_release/Assets/Shared/Textures/Terrain/MossyGrass/T_MossyGrass_01_BC.PNG");
+			"vsbuild/Assets/Shared/Textures/Terrain/MossyGrass/T_MossyGrass_01_BC.PNG");
 		GrassRenderer grassRenderer(context,
 			grassDataCs, grassInstCs, grassVs, grassPs,
 			terrainRenderer.heightResource(), terrainRenderer.normalResource(),
@@ -1035,22 +1035,22 @@ int main() {
 
 		// ---- 加载参考项目模型 ----
 		Model boxModel;
-		boxModel.load(context, "../vsbuild/Assets/Shared/Models/Box.fbx");
+		boxModel.load(context, "vsbuild/Assets/Shared/Models/Box.fbx");
 		std::cout << "[AfterglowRender DX12] loaded Box.fbx: "
 			<< boxModel.meshes().size() << " mesh(es)" << std::endl;
 
 		// 参考项目 Shared/Models 简单模型（远距离放置，验证雾效果）。
 		Model sphereModel, planeModel, prismModel;
-		sphereModel.load(context, "../vsbuild/Assets/Shared/Models/Sphere.fbx");
-		planeModel.load(context, "../vsbuild/Assets/Shared/Models/Plane.fbx");
-		prismModel.load(context, "../vsbuild/Assets/Shared/Models/HexagonalPrism.fbx");
+		sphereModel.load(context, "vsbuild/Assets/Shared/Models/Sphere.fbx");
+		planeModel.load(context, "vsbuild/Assets/Shared/Models/Plane.fbx");
+		prismModel.load(context, "vsbuild/Assets/Shared/Models/HexagonalPrism.fbx");
 		std::cout << "[AfterglowRender DX12] loaded shared models (Sphere/Plane/Prism): "
 			<< sphereModel.meshes().size() << "/" << planeModel.meshes().size() << "/"
 			<< prismModel.meshes().size() << " mesh(es)" << std::endl;
 
 		// SkySphere 天空盒（参考项目 Shared/Models/SkySphere.fbx，scale 大包住场景）。
 		Model skySphereModel;
-		skySphereModel.load(context, "../vsbuild/Assets/Shared/Models/SkySphere.fbx");
+		skySphereModel.load(context, "vsbuild/Assets/Shared/Models/SkySphere.fbx");
 		std::cout << "[AfterglowRender DX12] loaded SkySphere: "
 			<< skySphereModel.meshes().size() << " mesh(es), materials=[";
 		for (std::size_t i = 0; i < skySphereModel.materialNames().size(); ++i) {
@@ -1059,7 +1059,7 @@ int main() {
 		std::cout << "]" << std::endl;
 
 		Model battleMageModel;
-		battleMageModel.load(context, "../vsbuild/Assets/Characters/BattleMage/BattleMage.fbx");
+		battleMageModel.load(context, "vsbuild/Assets/Characters/BattleMage/BattleMage.fbx");
 		std::cout << "[AfterglowRender DX12] loaded BattleMage.fbx: "
 			<< battleMageModel.meshes().size() << " mesh(es)" << std::endl;
 		for (std::size_t i = 0; i < battleMageModel.materialNames().size(); ++i) {
@@ -1069,32 +1069,32 @@ int main() {
 
 		// Yvonne（第二个角色，参考项目 Assets/Characters/Yvonne/Yvonne.fbx，无 scale）。
 		Model yvonneModel;
-		yvonneModel.load(context, "../vsbuild/Assets/Characters/Yvonne/Yvonne.fbx");
+		yvonneModel.load(context, "vsbuild/Assets/Characters/Yvonne/Yvonne.fbx");
 		std::cout << "[AfterglowRender DX12] loaded Yvonne.fbx: "
 			<< yvonneModel.meshes().size() << " mesh(es)" << std::endl;
 
 		// Ankha（第三个角色，参考项目 Assets/Characters/Ankha/Ankha.fbx，scale 0.02）。
 		Model ankhaModel;
-		ankhaModel.load(context, "../vsbuild/Assets/Characters/Ankha/Ankha.fbx");
+		ankhaModel.load(context, "vsbuild/Assets/Characters/Ankha/Ankha.fbx");
 		std::cout << "[AfterglowRender DX12] loaded Ankha.fbx: "
 			<< ankhaModel.meshes().size() << " mesh(es)" << std::endl;
 
 		// 装饰模型：PaperAirplane（参考项目 Boids，scale 0.2）+ DebugBox（参考项目 GlitchedMosaics，位置 (4,4,1)）。
 		Model paperPlaneModel, debugBoxModel;
-		paperPlaneModel.load(context, "../vsbuild/Assets/Shared/Models/PaperAirplane.fbx");
-		debugBoxModel.load(context, "../vsbuild/Assets/Shared/Models/DebugBox.fbx");
+		paperPlaneModel.load(context, "vsbuild/Assets/Shared/Models/PaperAirplane.fbx");
+		debugBoxModel.load(context, "vsbuild/Assets/Shared/Models/DebugBox.fbx");
 		std::cout << "[AfterglowRender DX12] loaded PaperAirplane/DebugBox: "
 			<< paperPlaneModel.meshes().size() << "/" << debugBoxModel.meshes().size() << " mesh(es)" << std::endl;
 
 		// Grass 实例化网格（参考项目 InstancingGrass.fbx）。
 		Model grassMeshModel;
-		grassMeshModel.load(context, "../vsbuild/Assets/Shared/Models/InstancingGrass.fbx");
+		grassMeshModel.load(context, "vsbuild/Assets/Shared/Models/InstancingGrass.fbx");
 		std::cout << "[AfterglowRender DX12] loaded InstancingGrass.fbx: "
 			<< grassMeshModel.meshes().size() << " mesh(es)" << std::endl;
 
 		// AnkhaFur（参考项目 ShellFur 实例化毛：AnkhaFur.fbx + AnkhaFur.mati parent=ShellFur）。
 		Model ankhaFurModel;
-		ankhaFurModel.load(context, "../vsbuild/Assets/Characters/Ankha/AnkhaFur.fbx");
+		ankhaFurModel.load(context, "vsbuild/Assets/Characters/Ankha/AnkhaFur.fbx");
 		std::cout << "[AfterglowRender DX12] loaded AnkhaFur.fbx: "
 			<< ankhaFurModel.meshes().size() << " mesh(es)" << std::endl;
 
@@ -1962,3 +1962,4 @@ int main() {
 	}
 	return EXIT_SUCCESS;
 }
+
